@@ -248,12 +248,11 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
 
         # Flush Langfuse traces
         try:
-            from observability.langfuse_client import _langfuse_client
-            if _langfuse_client:
-                _langfuse_client.flush()
-                logger.info("[Pipeline] Langfuse traces flushed")
-        except Exception:
-            pass
+            from observability.langfuse_client import flush as langfuse_flush
+            langfuse_flush()
+            logger.info("[Pipeline] Langfuse traces flushed")
+        except Exception as e:
+            logger.warning(f"[Pipeline] Langfuse flush issue: {e}")
 
         logger.info(f"[Pipeline] ✅ Incident {incident_id} fully resolved in {pipeline_duration}ms")
 
