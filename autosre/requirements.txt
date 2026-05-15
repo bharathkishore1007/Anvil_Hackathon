@@ -1,0 +1,29 @@
+# AutoSRE - Autonomous Multi-Agent Incident Resolution System
+# Core Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+
+# Task Queue
+celery[redis]
+redis
+
+# Database
+psycopg[binary]
+
+# AI / LLM (Ollama via OpenAI-compatible API)
+httpx
+openai
+
+# External Integrations
+slack_sdk
+PyGithub
+jira
+
+# Observability
+langfuse
+
+# Utilities
+python-multipart
