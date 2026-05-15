@@ -149,6 +149,7 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
 
         _set_agent_status("planner", "completed")
         _incidents_store[incident_id]["execution_plan"] = plan
+        _incidents_store[incident_id]["agent_results"]["planner"] = plan
         logger.info(f"[Pipeline] Planner created {len(plan.get('tasks', []))} tasks")
 
         try:
