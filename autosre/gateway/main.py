@@ -84,6 +84,7 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
     
     Pipeline:  Planner → [Analyst + Researcher] (parallel) → Executor → Communicator → Aggregate
     Live status updates are written to _incidents_store so the dashboard can poll them.
+    Traces are sent to both Langfuse and Omium for observability.
     """
     from agents.planner import PlannerAgent
     from agents.analyst import AnalystAgent
@@ -92,6 +93,13 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
     from agents.communicator import CommunicatorAgent
     from agents.executor import ExecutorAgent
     import concurrent.futures
+
+    # Initialize Omium tracing
+    try:
+        from observability.omium_client import init_omium
+        init_omium()
+    except Exception:
+        pass
 
     incident_id = incident_data["incident_id"]
     logger.info(f"[Pipeline] Processing incident {incident_id}")
@@ -175,8 +183,18 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
                 agent_input = {**base_input, "input": task_input_text or base_input["title"]}
                 if extra_input:
                     agent_input.update(extra_input)
-                agent = agent_class()
-                result = agent.run(agent_input, incident_id)
+
+                # Wrap agent.run with Omium trace
+                def _do_run():
+                    agent = agent_class()
+                    return agent.run(agent_input, incident_id)
+
+                try:
+                    from observability.omium_client import run_traced_agent
+                    result = run_traced_agent(agent_type, _do_run)
+                except Exception:
+                    result = _do_run()
+
                 _set_agent_status(agent_type, "completed")
                 _incidents_store[incident_id]["agent_results"][agent_type] = result
                 logger.info(f"[Pipeline] {agent_type} completed")
@@ -467,9 +485,11 @@ async def system_status():
             "jira": settings.has_jira(),
             "langfuse": settings.has_langfuse(),
             "email": settings.has_email(),
+            "omium": settings.has_omium(),
             "ollama": True,
         },
         "langfuse_url": settings.LANGFUSE_BASE_URL if settings.has_langfuse() else None,
+        "omium_url": "https://app.omium.ai" if settings.has_omium() else None,
     }
 
 

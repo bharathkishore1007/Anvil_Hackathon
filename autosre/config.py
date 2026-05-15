@@ -86,5 +86,11 @@ class Settings:
     def has_email(self) -> bool:
         return bool(self.SMTP_EMAIL and self.SMTP_PASSWORD)
 
+    # --- Omium ---
+    OMIUM_API_KEY: str = os.getenv("OMIUM_API_KEY", "")
+
+    def has_omium(self) -> bool:
+        return bool(self.OMIUM_API_KEY)
+
 
 settings = Settings()

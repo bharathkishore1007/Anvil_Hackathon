@@ -48,11 +48,15 @@ async function checkSystemHealth() {
         updateIntegration('intGithub', sData.integrations?.github, true);
         updateIntegration('intJira', sData.integrations?.jira, true);
         updateIntegration('intLangfuse', sData.integrations?.langfuse, true);
+        updateIntegration('intOmium', sData.integrations?.omium, true);
         updateIntegration('intEmail', sData.integrations?.email, true);
 
         // Store langfuse URL for click-through
         if (sData.langfuse_url) {
             window._langfuseUrl = sData.langfuse_url;
+        }
+        if (sData.omium_url) {
+            window._omiumUrl = sData.omium_url;
         }
 
         document.getElementById('modelName').textContent = sData.ollama_model || 'Unknown';
@@ -86,6 +90,11 @@ function updateIntegration(id, connected, isConfigured) {
 
 function openLangfuse() {
     const url = window._langfuseUrl || 'https://jp.cloud.langfuse.com';
+    window.open(url, '_blank');
+}
+
+function openOmium() {
+    const url = window._omiumUrl || 'https://app.omium.ai';
     window.open(url, '_blank');
 }
 
