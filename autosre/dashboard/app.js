@@ -123,6 +123,13 @@ async function checkUserIntegrations() {
         updateInt('intLangfuse', ints.langfuse?.configured || false);
         updateInt('intOmium', ints.omium?.configured || false);
         _userIntChecked = true;
+
+        // Show welcome popup if NO integrations are configured (first-time user)
+        const hasAny = Object.values(ints).some(v => v.configured);
+        if (!hasAny && !sessionStorage.getItem('welcomeShown')) {
+            showWelcomePopup();
+            sessionStorage.setItem('welcomeShown', '1');
+        }
     } catch {
         // If settings endpoint fails, show as offline
         ['intSlack','intGithub','intJira','intEmail','intLangfuse','intOmium'].forEach(id => updateInt(id, false));
@@ -149,11 +156,6 @@ async function refreshIncidents() {
         allIncidents = data.incidents || [];
         renderRecentIncidents();
         renderIncidentsList();
-        // Show welcome popup for new users
-        if (allIncidents.length === 0 && !sessionStorage.getItem('welcomeShown')) {
-            showWelcomePopup();
-            sessionStorage.setItem('welcomeShown', '1');
-        }
     } catch(e) { console.error('Refresh failed:', e); }
 }
 
