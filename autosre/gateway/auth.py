@@ -39,14 +39,14 @@ class UserResponse(BaseModel):
 
 # ─── Password Hashing ───
 def _hash_password(password: str) -> str:
-    from passlib.context import CryptContext
-    ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", truncate_error=False)
-    return ctx.hash(password[:72])
+    import bcrypt
+    pwd = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(pwd, bcrypt.gensalt()).decode("utf-8")
 
 def _verify_password(plain: str, hashed: str) -> bool:
-    from passlib.context import CryptContext
-    ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", truncate_error=False)
-    return ctx.verify(plain[:72], hashed)
+    import bcrypt
+    pwd = plain.encode("utf-8")[:72]
+    return bcrypt.checkpw(pwd, hashed.encode("utf-8"))
 
 
 # ─── JWT ───

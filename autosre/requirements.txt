@@ -31,6 +31,6 @@ omium
 python-multipart
 
 # Auth & Security
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 cryptography
