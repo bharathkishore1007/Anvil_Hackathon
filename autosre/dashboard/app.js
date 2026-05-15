@@ -59,31 +59,28 @@ async function checkHealth() {
         else { dot.className='chip-dot offline'; txt.textContent='Degraded'; }
 
         // Model
-        const provider = s.llm_provider || 'ollama';
-        const modelLabel = provider === 'gemini' ? `🧠 ${s.ollama_model || 'gemini-2.5-flash'}` : `🧠 ${s.ollama_model || '—'}`;
         document.getElementById('modelName').textContent = s.ollama_model || '—';
 
-        // Integrations
-        const intMap = {
-            intOllama: h.checks?.ollama, intRedis: h.checks?.redis, intPostgres: h.checks?.postgres,
-            intSlack: s.integrations?.slack, intGithub: s.integrations?.github,
-            intJira: s.integrations?.jira, intLangfuse: s.integrations?.langfuse,
-            intOmium: s.integrations?.omium, intEmail: s.integrations?.email,
-        };
-        for (const [id, val] of Object.entries(intMap)) updateInt(id, val);
+        // Core infra integrations (global — these are system-level)
+        updateInt('intOllama', h.checks?.ollama);
+        updateInt('intRedis', h.checks?.redis);
+        updateInt('intPostgres', h.checks?.postgres);
+
+        // User-specific integrations — check from user's own settings
+        checkUserIntegrations();
 
         // URLs
         if (s.langfuse_url) window._langfuseUrl = s.langfuse_url;
         if (s.omium_url) window._omiumUrl = s.omium_url;
 
-        // Metrics — combine API status + local incident data for accuracy
-        const total = Math.max(s.total_incidents || 0, allIncidents.length);
-        const resolved = allIncidents.filter(i => i.status === 'diagnosed_and_escalated' || i.status === 'resolved').length || s.resolved_incidents || 0;
+        // Metrics — ONLY from allIncidents (per-user filtered)
+        const total = allIncidents.length;
+        const resolved = allIncidents.filter(i => i.status === 'diagnosed_and_escalated' || i.status === 'resolved').length;
         const active = allIncidents.filter(i => i.status === 'processing' || i.status === 'investigating' || i.status === 'open').length;
         document.getElementById('metricTotal').textContent = total;
         document.getElementById('metricActive').textContent = active;
         document.getElementById('metricResolved').textContent = resolved;
-        document.getElementById('navIncidentCount').textContent = total;
+        document.getElementById('navIncidentCount').textContent = total || '';
 
         // Avg resolution time
         const resolvedIncs = allIncidents.filter(i => i.pipeline_duration_ms > 0);
@@ -107,6 +104,28 @@ async function checkHealth() {
     } catch {
         document.querySelector('.chip-dot').className = 'chip-dot offline';
         document.getElementById('chipText').textContent = 'Offline';
+    }
+}
+
+// Check user's own integration settings
+let _userIntChecked = false;
+async function checkUserIntegrations() {
+    if (_userIntChecked) return; // Only check once per session
+    try {
+        const res = await fetch(`${API}/settings/integrations`, {headers: authHeaders()});
+        if (!res.ok) return;
+        const data = await res.json();
+        const ints = data.integrations || {};
+        updateInt('intSlack', ints.slack?.configured || false);
+        updateInt('intGithub', ints.github?.configured || false);
+        updateInt('intJira', ints.jira?.configured || false);
+        updateInt('intEmail', ints.email?.configured || false);
+        updateInt('intLangfuse', ints.langfuse?.configured || false);
+        updateInt('intOmium', ints.omium?.configured || false);
+        _userIntChecked = true;
+    } catch {
+        // If settings endpoint fails, show as offline
+        ['intSlack','intGithub','intJira','intEmail','intLangfuse','intOmium'].forEach(id => updateInt(id, false));
     }
 }
 
