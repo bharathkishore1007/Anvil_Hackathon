@@ -228,26 +228,30 @@ async function loadIncidentDetails(id) {
 
 function updateAgentNodes(incident, runs) {
     const agentStates = {};
-    const status = incident.status || '';
 
-    if (status === 'processing' || status === 'investigating') {
-        agentStates.planner = 'completed';
-    } else if (status === 'diagnosed_and_escalated' || status === 'resolved') {
-        agentStates.planner = 'completed';
-    }
-
-    // From agent results
-    if (incident.agent_results) {
-        for (const agent of Object.keys(incident.agent_results)) {
-            const r = incident.agent_results[agent];
-            agentStates[agent] = r?.error ? 'failed' : 'completed';
+    // Priority 1: live agent_status from pipeline (real-time)
+    if (incident.agent_status) {
+        for (const [agent, status] of Object.entries(incident.agent_status)) {
+            agentStates[agent] = status;
         }
     }
 
-    // From DB runs
+    // Priority 2: from agent_results (completed)
+    if (incident.agent_results) {
+        for (const agent of Object.keys(incident.agent_results)) {
+            const r = incident.agent_results[agent];
+            if (!agentStates[agent] || agentStates[agent] === 'idle') {
+                agentStates[agent] = r?.error ? 'failed' : 'completed';
+            }
+        }
+    }
+
+    // Priority 3: from DB runs
     runs.forEach(run => {
-        agentStates[run.agent_type] = run.status === 'completed' ? 'completed' :
-            run.status === 'running' ? 'running' : run.status === 'failed' ? 'failed' : 'idle';
+        if (!agentStates[run.agent_type]) {
+            agentStates[run.agent_type] = run.status === 'completed' ? 'completed' :
+                run.status === 'running' ? 'running' : run.status === 'failed' ? 'failed' : 'idle';
+        }
     });
 
     document.querySelectorAll('.agent-node').forEach(node => {

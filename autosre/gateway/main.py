@@ -80,113 +80,151 @@ _runs_store: list = []
 
 
 def _process_incident_sync(incident_data: Dict[str, Any]):
-    """Process an incident synchronously (used when Celery is unavailable)."""
+    """Process an incident through the full multi-agent pipeline.
+    
+    Pipeline:  Planner → [Analyst + Researcher] (parallel) → Executor → Communicator → Aggregate
+    Live status updates are written to _incidents_store so the dashboard can poll them.
+    """
     from agents.planner import PlannerAgent
     from agents.analyst import AnalystAgent
     from agents.researcher import ResearcherAgent
     from agents.coder import CoderAgent
     from agents.communicator import CommunicatorAgent
     from agents.executor import ExecutorAgent
+    import concurrent.futures
 
     incident_id = incident_data["incident_id"]
-    logger.info(f"[Sync] Processing incident {incident_id}")
+    logger.info(f"[Pipeline] Processing incident {incident_id}")
+    pipeline_start = time.time()
+
+    # Initialize incident state for dashboard
+    _incidents_store[incident_id] = {
+        **incident_data,
+        "status": "processing",
+        "phase": "initializing",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "agent_results": {},
+        "agent_status": {},
+    }
+
+    def _set_agent_status(agent: str, status: str):
+        """Update agent status so dashboard can show live transitions."""
+        store = _incidents_store.get(incident_id, {})
+        if "agent_status" not in store:
+            store["agent_status"] = {}
+        store["agent_status"][agent] = status
+        _incidents_store[incident_id] = store
+
+    def _set_phase(phase: str):
+        _incidents_store[incident_id]["phase"] = phase
+
+    # Persist to databases (non-blocking)
+    try:
+        from memory.postgres_client import get_postgres
+        from memory.redis_client import get_redis
+        pg = get_postgres()
+        pg.create_incident(incident_data)
+        redis = get_redis()
+        redis.add_active_incident(incident_id)
+        redis.set_incident_state(incident_id, {**incident_data, "status": "processing"})
+    except Exception as e:
+        logger.warning(f"DB storage failed (continuing): {e}")
 
     try:
-        # Update state
-        _incidents_store[incident_id] = {
-            **incident_data,
-            "status": "processing",
-            "phase": "planning",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "agent_results": {},
-        }
+        # ── Phase 1: Planning ──
+        _set_phase("planning")
+        _set_agent_status("planner", "running")
+        logger.info(f"[Pipeline] Phase 1: Planning for {incident_id}")
 
-        # Store in postgres
-        try:
-            from memory.postgres_client import get_postgres
-            from memory.redis_client import get_redis
-            pg = get_postgres()
-            pg.create_incident(incident_data)
-            redis = get_redis()
-            redis.add_active_incident(incident_id)
-            redis.set_incident_state(incident_id, {**incident_data, "status": "processing"})
-        except Exception as e:
-            logger.warning(f"DB storage failed (continuing): {e}")
-
-        # Phase 1: Planning
-        logger.info(f"[Sync] Phase 1: Planning for {incident_id}")
         planner = PlannerAgent()
         plan = planner.create_plan(incident_data)
 
+        _set_agent_status("planner", "completed")
         _incidents_store[incident_id]["execution_plan"] = plan
-        _incidents_store[incident_id]["phase"] = "executing"
+        logger.info(f"[Pipeline] Planner created {len(plan.get('tasks', []))} tasks")
 
         try:
             from memory.postgres_client import get_postgres
-            pg = get_postgres()
-            pg.update_incident(incident_id, {"execution_plan": plan, "status": "investigating"})
+            get_postgres().update_incident(incident_id, {"execution_plan": plan, "status": "investigating"})
         except Exception:
             pass
 
-        # Phase 2: Execute agents
-        logger.info(f"[Sync] Phase 2: Executing {len(plan.get('tasks', []))} tasks")
+        # ── Phase 2: Parallel agent execution ──
+        _set_phase("analyzing")
+        logger.info(f"[Pipeline] Phase 2: Executing agents in parallel")
         results = {}
 
-        # Run independent agents first
-        for task in plan.get("tasks", []):
-            if not task.get("depends_on"):
-                agent_type = task.get("agent")
-                agent_input = {
-                    "input": task.get("input", ""),
-                    "title": incident_data.get("title", ""),
-                    "severity": incident_data.get("severity", "medium"),
-                    "description": incident_data.get("description", ""),
-                    "incident_id": incident_id,
-                    "similar_incidents": plan.get("similar_incidents", []),
-                }
-                try:
-                    agent_map = {
-                        "analyst": AnalystAgent, "researcher": ResearcherAgent,
-                        "coder": CoderAgent,
-                    }
-                    if agent_type in agent_map:
-                        agent = agent_map[agent_type]()
-                        results[agent_type] = agent.run(agent_input, incident_id)
-                        _incidents_store[incident_id]["agent_results"][agent_type] = results[agent_type]
-                        logger.info(f"[Sync] {agent_type} completed")
-                except Exception as e:
-                    logger.error(f"[Sync] {agent_type} failed: {e}")
-                    results[agent_type] = {"error": str(e)}
+        # Build agent input shared context
+        base_input = {
+            "title": incident_data.get("title", ""),
+            "severity": incident_data.get("severity", "medium"),
+            "description": incident_data.get("description", ""),
+            "incident_id": incident_id,
+            "similar_incidents": plan.get("similar_incidents", []),
+        }
 
-        # Run dependent agents
-        for task in plan.get("tasks", []):
-            if task.get("depends_on"):
-                agent_type = task.get("agent")
-                agent_input = {
-                    "input": task.get("input", ""),
-                    "title": incident_data.get("title", ""),
-                    "severity": incident_data.get("severity", "medium"),
-                    "description": incident_data.get("description", ""),
-                    "incident_id": incident_id,
-                    "diagnosis": results.get("analyst", {}),
-                    "similar_incidents": plan.get("similar_incidents", []),
-                }
-                try:
-                    agent_map = {
-                        "communicator": CommunicatorAgent, "executor": ExecutorAgent,
-                    }
-                    if agent_type in agent_map:
-                        agent = agent_map[agent_type]()
-                        results[agent_type] = agent.run(agent_input, incident_id)
-                        _incidents_store[incident_id]["agent_results"][agent_type] = results[agent_type]
-                        logger.info(f"[Sync] {agent_type} completed")
-                except Exception as e:
-                    logger.error(f"[Sync] {agent_type} failed: {e}")
-                    results[agent_type] = {"error": str(e)}
+        # Run INDEPENDENT agents in parallel (analyst + researcher + coder)
+        def _run_agent(agent_type, agent_class, extra_input=None):
+            _set_agent_status(agent_type, "running")
+            try:
+                task_input_text = ""
+                for task in plan.get("tasks", []):
+                    if task.get("agent") == agent_type:
+                        task_input_text = task.get("input", "")
+                        break
+                agent_input = {**base_input, "input": task_input_text or base_input["title"]}
+                if extra_input:
+                    agent_input.update(extra_input)
+                agent = agent_class()
+                result = agent.run(agent_input, incident_id)
+                _set_agent_status(agent_type, "completed")
+                _incidents_store[incident_id]["agent_results"][agent_type] = result
+                logger.info(f"[Pipeline] {agent_type} completed")
+                return agent_type, result
+            except Exception as e:
+                _set_agent_status(agent_type, "failed")
+                logger.error(f"[Pipeline] {agent_type} failed: {e}")
+                return agent_type, {"error": str(e)}
 
-        # Phase 3: Aggregate
-        logger.info(f"[Sync] Phase 3: Aggregating results")
+        # Execute analyst + researcher + coder in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(_run_agent, "analyst", AnalystAgent),
+                executor.submit(_run_agent, "researcher", ResearcherAgent),
+            ]
+            # Only run coder if plan includes it
+            coder_tasks = [t for t in plan.get("tasks", []) if t.get("agent") == "coder"]
+            if coder_tasks:
+                futures.append(executor.submit(_run_agent, "coder", CoderAgent))
+
+            for future in concurrent.futures.as_completed(futures, timeout=180):
+                agent_type, result = future.result()
+                results[agent_type] = result
+
+        # ── Phase 3: Dependent agents (need diagnosis results) ──
+        _set_phase("acting")
+        logger.info(f"[Pipeline] Phase 3: Running dependent agents")
+
+        diagnosis = results.get("analyst", {})
+
+        # Executor — creates GitHub issues, Jira tickets, triggers rollbacks
+        _run_agent("executor", ExecutorAgent, {
+            "diagnosis": diagnosis,
+        })
+        results["executor"] = _incidents_store[incident_id]["agent_results"].get("executor", {})
+
+        # Communicator — posts to Slack + sends email
+        _run_agent("communicator", CommunicatorAgent, {
+            "diagnosis": diagnosis,
+        })
+        results["communicator"] = _incidents_store[incident_id]["agent_results"].get("communicator", {})
+
+        # ── Phase 4: Aggregate ──
+        _set_phase("aggregating")
+        logger.info(f"[Pipeline] Phase 4: Aggregating results")
         final = planner.aggregate_results(incident_id, plan, results)
+
+        pipeline_duration = int((time.time() - pipeline_start) * 1000)
 
         _incidents_store[incident_id].update({
             "status": "diagnosed_and_escalated",
@@ -194,13 +232,13 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
             "root_cause": final.get("root_cause", ""),
             "resolution": final.get("summary", ""),
             "completed_at": datetime.now(timezone.utc).isoformat(),
+            "pipeline_duration_ms": pipeline_duration,
             "final_result": final,
         })
 
         try:
             from memory.postgres_client import get_postgres
-            pg = get_postgres()
-            pg.update_incident(incident_id, {
+            get_postgres().update_incident(incident_id, {
                 "status": "diagnosed_and_escalated",
                 "root_cause": final.get("root_cause", ""),
                 "resolution": final.get("summary", ""),
@@ -208,10 +246,19 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
         except Exception:
             pass
 
-        logger.info(f"[Sync] Incident {incident_id} fully resolved")
+        # Flush Langfuse traces
+        try:
+            from observability.langfuse_client import _langfuse_client
+            if _langfuse_client:
+                _langfuse_client.flush()
+                logger.info("[Pipeline] Langfuse traces flushed")
+        except Exception:
+            pass
+
+        logger.info(f"[Pipeline] ✅ Incident {incident_id} fully resolved in {pipeline_duration}ms")
 
     except Exception as e:
-        logger.error(f"[Sync] Fatal error processing {incident_id}: {e}")
+        logger.error(f"[Pipeline] Fatal error processing {incident_id}: {e}")
         _incidents_store[incident_id] = {
             **_incidents_store.get(incident_id, incident_data),
             "status": "failed",
