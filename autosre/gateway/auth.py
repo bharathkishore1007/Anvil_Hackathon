@@ -5,10 +5,12 @@ JWT-based auth with bcrypt password hashing. Users stored in PostgreSQL.
 
 import logging
 import os
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger("autosre.auth")
@@ -19,6 +21,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 JWT_SECRET = os.getenv("JWT_SECRET", "autosre-jwt-secret-2026-change-in-prod")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 72
+
+# ─── Rate Limiting ───
+_rate_limits = defaultdict(list)  # IP -> [timestamps]
+RATE_LIMIT_MAX = 5  # max attempts
+RATE_LIMIT_WINDOW = 60  # per 60 seconds
+
+def _check_rate_limit(request: Request):
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    _rate_limits[ip] = [t for t in _rate_limits[ip] if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_limits[ip]) >= RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
+    _rate_limits[ip].append(now)
 
 
 # ─── Models ───
@@ -117,8 +132,9 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
 
 # ─── Endpoints ───
 @router.post("/signup")
-async def signup(req: SignupRequest):
+async def signup(req: SignupRequest, request: Request):
     """Register a new user."""
+    _check_rate_limit(request)
     try:
         _ensure_auth_tables()
     except Exception as e:
@@ -127,7 +143,7 @@ async def signup(req: SignupRequest):
     pg = _get_db()
     conn = pg._get_conn()
     if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     # Check if email exists
     try:
@@ -139,7 +155,7 @@ async def signup(req: SignupRequest):
         raise
     except Exception as e:
         logger.error(f"Signup check failed: {e}")
-        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
 
     # Create user
     user_id = str(uuid.uuid4())[:8]
@@ -157,7 +173,7 @@ async def signup(req: SignupRequest):
             )
     except Exception as e:
         logger.error(f"User insert failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Insert error: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
 
     token = _create_token(user_id, req.email.lower(), req.name)
     logger.info(f"User registered: {req.email}")
@@ -165,20 +181,22 @@ async def signup(req: SignupRequest):
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """Authenticate and return JWT."""
+    _check_rate_limit(request)
     _ensure_auth_tables()
     pg = _get_db()
     conn = pg._get_conn()
     if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name, email, password_hash FROM users WHERE email = %s", (req.email.lower(),))
             row = cur.fetchone()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Login query failed: {e}")
+        raise HTTPException(status_code=500, detail="Login failed. Please try again.")
 
     if not row:
         raise HTTPException(status_code=401, detail="Invalid email or password")

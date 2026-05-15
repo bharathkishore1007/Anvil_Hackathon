@@ -28,7 +28,7 @@ class Settings:
     POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
     POSTGRES_DB: str = os.getenv("POSTGRES_DB", "autosre")
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "autosre")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "autosre_secret_2026")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
 
     @property
     def POSTGRES_DSN(self) -> str:

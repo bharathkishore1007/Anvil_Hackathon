@@ -577,33 +577,45 @@ async def list_incidents(request: Request):
 
 
 @app.get("/incidents/{incident_id}")
-async def get_incident(incident_id: str):
+async def get_incident(incident_id: str, request: Request):
     """Get detailed incident information including agent traces."""
+    user_id = _extract_user_id(request)
     # Try postgres
     try:
         from memory.postgres_client import get_postgres
         pg = get_postgres()
         incident = pg.get_incident(incident_id)
         if incident:
+            # Verify ownership
+            if user_id != "system" and incident.get("user_id", "system") != user_id:
+                raise HTTPException(status_code=404, detail="Incident not found")
             runs = pg.get_agent_runs(incident_id)
             return {
                 "incident": _serialize_single(incident),
                 "agent_runs": _serialize(runs),
                 "source": "database",
             }
+    except HTTPException:
+        raise
     except Exception:
         pass
 
     # Fallback to in-memory
     if incident_id in _incidents_store:
-        return {"incident": _serialize_single(_incidents_store[incident_id]), "source": "memory"}
+        inc = _incidents_store[incident_id]
+        if user_id != "system" and inc.get("user_id", "system") != user_id:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return {"incident": _serialize_single(inc), "source": "memory"}
 
     raise HTTPException(status_code=404, detail="Incident not found")
 
 
 @app.post("/admin/fix-stuck")
-async def fix_stuck_incidents():
-    """Fix old incidents stuck at 'investigating' in the DB."""
+async def fix_stuck_incidents(request: Request):
+    """Fix old incidents stuck at 'investigating' in the DB. Requires auth."""
+    user_id = _extract_user_id(request)
+    if user_id == "system":
+        raise HTTPException(status_code=401, detail="Authentication required")
     fixed = 0
     try:
         from memory.postgres_client import get_postgres
@@ -611,20 +623,22 @@ async def fix_stuck_incidents():
         stuck = pg.list_incidents(limit=50, status="investigating")
         for inc in (stuck or []):
             iid = inc.get("incident_id", "")
-            # Check if agent runs completed
             runs = pg.get_agent_runs(iid)
             completed_agents = [r for r in runs if r.get("status") == "completed"]
-            if len(completed_agents) >= 2:  # At least planner + analyst completed
+            if len(completed_agents) >= 2:
                 pg.update_incident(iid, {"status": "diagnosed_and_escalated"})
                 fixed += 1
-    except Exception as e:
-        return {"fixed": fixed, "error": str(e)}
+    except Exception:
+        return {"fixed": fixed, "error": "Operation failed"}
     return {"fixed": fixed, "message": f"Fixed {fixed} stuck incidents"}
 
 
 @app.get("/runs")
-async def list_runs():
-    """List all agent runs (observability endpoint)."""
+async def list_runs(request: Request):
+    """List agent runs (requires auth)."""
+    user_id = _extract_user_id(request)
+    if user_id == "system":
+        raise HTTPException(status_code=401, detail="Authentication required")
     try:
         from memory.postgres_client import get_postgres
         pg = get_postgres()
@@ -636,36 +650,13 @@ async def list_runs():
 
 @app.get("/system/status")
 async def system_status():
-    """Get full system status for dashboard."""
-    try:
-        from memory.redis_client import get_redis
-        redis = get_redis()
-        active = redis.get_active_incidents()
-    except Exception:
-        active = list(_incidents_store.keys())
-
-    total = len(_incidents_store)
-    resolved = sum(1 for i in _incidents_store.values() if i.get("status") in ("resolved", "diagnosed_and_escalated"))
-
+    """Get system status for dashboard (sanitized, no secrets)."""
     return {
-        "active_incidents": active,
-        "total_incidents": total,
-        "resolved_incidents": resolved,
-        "in_memory_incidents": list(_incidents_store.keys()),
         "agents": ["planner", "analyst", "researcher", "coder", "communicator", "executor"],
         "ollama_model": settings.GEMINI_MODEL if settings.has_gemini() else settings.OLLAMA_MODEL,
-        "integrations": {
-            "slack": settings.has_slack(),
-            "github": settings.has_github(),
-            "jira": settings.has_jira(),
-            "langfuse": settings.has_langfuse(),
-            "email": settings.has_email(),
-            "omium": settings.has_omium(),
-            "ollama": settings.has_gemini() or True,
-        },
+        "llm_provider": "gemini" if settings.has_gemini() else "ollama",
         "langfuse_url": settings.LANGFUSE_BASE_URL if settings.has_langfuse() else None,
         "omium_url": "https://app.omium.ai" if settings.has_omium() else None,
-        "llm_provider": "gemini" if settings.has_gemini() else "ollama",
     }
 
 
