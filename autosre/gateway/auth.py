@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 logger = logging.getLogger("autosre.auth")
 
@@ -119,7 +119,11 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
 @router.post("/signup")
 async def signup(req: SignupRequest):
     """Register a new user."""
-    _ensure_auth_tables()
+    try:
+        _ensure_auth_tables()
+    except Exception as e:
+        logger.error(f"Table creation failed: {e}")
+
     pg = _get_db()
     conn = pg._get_conn()
     if not conn:
@@ -134,11 +138,17 @@ async def signup(req: SignupRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Signup check failed: {e}")
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
 
     # Create user
     user_id = str(uuid.uuid4())[:8]
-    password_hash = _hash_password(req.password)
+    try:
+        password_hash = _hash_password(req.password)
+    except Exception as e:
+        logger.error(f"Password hash failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Hash error: {e}")
+
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -146,7 +156,8 @@ async def signup(req: SignupRequest):
                 (user_id, req.name, req.email.lower(), password_hash),
             )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"User insert failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Insert error: {e}")
 
     token = _create_token(user_id, req.email.lower(), req.name)
     logger.info(f"User registered: {req.email}")

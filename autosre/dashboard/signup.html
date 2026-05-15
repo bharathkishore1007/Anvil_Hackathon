@@ -110,7 +110,7 @@
                 localStorage.setItem('autosre_user', JSON.stringify(data.user));
                 window.location.href = '/';
             } catch (e) {
-                err.textContent = 'Connection error. Try again.';
+                err.textContent = 'Connection error: ' + e.message;
                 err.style.display = 'block';
             } finally {
                 btn.disabled = false; btn.textContent = 'Create Account';
