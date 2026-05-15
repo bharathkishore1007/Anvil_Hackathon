@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoSRE — Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root{--bg-0:#0b0e14;--bg-1:#10141c;--bg-2:#161b26;--bg-3:#1c2233;--border:rgba(255,255,255,0.06);--text-1:#e8ecf4;--text-2:#8893a7;--text-3:#515c72;--accent:#63b3ed;--accent-dim:rgba(99,179,237,0.1);--red:#fc8181;--green:#68d391;--radius:12px;--font:'Inter',sans-serif}
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:var(--font);background:var(--bg-0);color:var(--text-1);min-height:100vh;display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
+        .auth-container{width:100%;max-width:420px;padding:24px}
+        .auth-card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);padding:40px 36px;box-shadow:0 20px 60px rgba(0,0,0,0.4)}
+        .logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:32px}
+        .logo-svg{width:36px;height:36px}
+        .logo-text{font-size:1.5rem;font-weight:800;letter-spacing:-0.5px}.accent{color:var(--accent)}
+        .auth-title{text-align:center;font-size:1.1rem;font-weight:600;margin-bottom:6px}
+        .auth-sub{text-align:center;font-size:0.82rem;color:var(--text-3);margin-bottom:28px}
+        .form-group{margin-bottom:18px}
+        .form-group label{display:block;font-size:0.72rem;color:var(--text-3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+        .form-input{width:100%;padding:11px 14px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;color:var(--text-1);font-family:var(--font);font-size:0.88rem;outline:none;transition:border-color .2s}
+        .form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,179,237,0.1)}
+        .form-input::placeholder{color:var(--text-3)}
+        .btn-auth{width:100%;padding:12px;background:var(--accent);color:var(--bg-0);border:none;border-radius:8px;font-family:var(--font);font-weight:700;font-size:0.9rem;cursor:pointer;transition:all .2s;margin-top:8px}
+        .btn-auth:hover{background:#7cc4f0;box-shadow:0 4px 16px rgba(99,179,237,0.3)}
+        .btn-auth:disabled{opacity:0.5;cursor:not-allowed}
+        .auth-footer{text-align:center;margin-top:20px;font-size:0.8rem;color:var(--text-3)}
+        .auth-footer a{color:var(--accent);text-decoration:none;font-weight:600}
+        .auth-footer a:hover{text-decoration:underline}
+        .error-msg{background:rgba(252,129,129,0.1);border:1px solid rgba(252,129,129,0.2);color:var(--red);padding:10px 14px;border-radius:8px;font-size:0.8rem;margin-bottom:16px;display:none}
+        .glow{position:fixed;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(99,179,237,0.08),transparent 70%);top:20%;left:50%;transform:translateX(-50%);pointer-events:none}
+    </style>
+</head>
+<body>
+    <div class="glow"></div>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="logo">
+                <svg class="logo-svg" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" stroke="#63b3ed" stroke-width="2.5"/><path d="M10 16l4 4 8-8" stroke="#63b3ed" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div class="logo-text">Auto<span class="accent">SRE</span></div>
+            </div>
+            <div class="auth-title">Welcome back</div>
+            <div class="auth-sub">Sign in to your incident resolution dashboard</div>
+            <div class="error-msg" id="errorMsg"></div>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="email" class="form-input" placeholder="you@company.com" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-auth" id="btnSubmit">Sign In</button>
+            </form>
+            <div class="auth-footer">
+                Don't have an account? <a href="/signup">Sign up</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        // If already logged in, go to dashboard
+        if (localStorage.getItem('autosre_token')) {
+            window.location.href = '/';
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('btnSubmit');
+            const err = document.getElementById('errorMsg');
+            err.style.display = 'none';
+            btn.disabled = true; btn.textContent = 'Signing in…';
+
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        email: document.getElementById('email').value,
+                        password: document.getElementById('password').value,
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    err.textContent = data.detail || 'Login failed';
+                    err.style.display = 'block';
+                    return;
+                }
+                localStorage.setItem('autosre_token', data.token);
+                localStorage.setItem('autosre_user', JSON.stringify(data.user));
+                window.location.href = '/';
+            } catch (e) {
+                err.textContent = 'Connection error. Try again.';
+                err.style.display = 'block';
+            } finally {
+                btn.disabled = false; btn.textContent = 'Sign In';
+            }
+        }
+    </script>
+</body>
+</html>

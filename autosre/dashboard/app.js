@@ -8,8 +8,18 @@ let currentIncidentId = null;
 let allIncidents = [];
 let activityLog = [];
 
+// ─── Auth ───
+function getToken() { return localStorage.getItem('autosre_token'); }
+function authHeaders() { return { 'Authorization': `Bearer ${getToken()}` }; }
+function logout() {
+    localStorage.removeItem('autosre_token');
+    localStorage.removeItem('autosre_user');
+    window.location.href = '/login';
+}
+
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
+    if (!getToken()) { window.location.href = '/login'; return; }
     checkHealth();
     refreshIncidents();
     buildAgentsView();

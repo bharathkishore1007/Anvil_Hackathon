@@ -29,3 +29,8 @@ omium
 
 # Utilities
 python-multipart
+
+# Auth & Security
+passlib[bcrypt]
+python-jose[cryptography]
+cryptography

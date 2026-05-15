@@ -60,6 +60,12 @@ dashboard_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if os.path.isdir(dashboard_dir):
     app.mount("/static", StaticFiles(directory=dashboard_dir), name="dashboard")
 
+# Mount auth & settings routers
+from gateway.auth import router as auth_router
+from gateway.user_settings import router as settings_router
+app.include_router(auth_router)
+app.include_router(settings_router)
+
 
 # ─── Pydantic Models ───
 class SimulateRequest(BaseModel):
@@ -407,6 +413,36 @@ async def dashboard():
         with open(index_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse(content="<h1>AutoSRE Dashboard</h1><p>Dashboard files not found.</p>")
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    """Serve the login page."""
+    path = os.path.join(dashboard_dir, "login.html")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Login</h1>")
+
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page():
+    """Serve the signup page."""
+    path = os.path.join(dashboard_dir, "signup.html")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Signup</h1>")
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page():
+    """Serve the integration settings page."""
+    path = os.path.join(dashboard_dir, "settings.html")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>Settings</h1>")
 
 
 # ─── Webhook Endpoints ───
