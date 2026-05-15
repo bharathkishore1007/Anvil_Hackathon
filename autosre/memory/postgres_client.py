@@ -58,6 +58,7 @@ class PostgresClient:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS incidents (
                         incident_id TEXT PRIMARY KEY,
+                        user_id TEXT DEFAULT 'system',
                         source TEXT DEFAULT 'manual',
                         severity TEXT DEFAULT 'medium',
                         title TEXT NOT NULL,
@@ -97,6 +98,11 @@ class PostgresClient:
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
+            # Migration: add user_id if not exists
+            try:
+                cur.execute("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'system'")
+            except Exception:
+                pass
             logger.info("PostgreSQL schema verified")
         except Exception as e:
             logger.warning(f"Schema check failed: {e}")
@@ -109,11 +115,12 @@ class PostgresClient:
             with conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO incidents
-                       (incident_id, source, severity, title, description, metadata, status, execution_plan)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       (incident_id, user_id, source, severity, title, description, metadata, status, execution_plan)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (incident_id) DO UPDATE SET
                          status = EXCLUDED.status, updated_at = NOW()""",
-                    (incident["incident_id"], incident.get("source", "manual"),
+                    (incident["incident_id"], incident.get("user_id", "system"),
+                     incident.get("source", "manual"),
                      incident.get("severity", "medium"), incident["title"],
                      incident.get("description", ""),
                      json.dumps(incident.get("metadata", {})),

@@ -491,12 +491,15 @@ async def slack_webhook(request: Request):
 
 # ─── Simulation Endpoint ───
 @app.post("/incidents/simulate")
-async def simulate_incident(req: SimulateRequest):
+async def simulate_incident(req: SimulateRequest, request: Request):
     """Trigger a simulated incident for demo purposes."""
+    # Extract user_id from JWT if present
+    user_id = _extract_user_id(request)
     incident = normalize_manual(req.model_dump())
     incident_data = incident.model_dump()
+    incident_data["user_id"] = user_id  # Tag with user
     _incidents_store[incident_data["incident_id"]] = incident_data
-    logger.info(f"[Simulate] Firing incident: {incident_data['incident_id']}")
+    logger.info(f"[Simulate] Firing incident: {incident_data['incident_id']} for user: {user_id}")
     # Use thread instead of BackgroundTasks — survives on Cloud Run
     threading.Thread(
         target=_process_incident_sync,
@@ -511,10 +514,25 @@ async def simulate_incident(req: SimulateRequest):
     }
 
 
+def _extract_user_id(request: Request) -> str:
+    """Extract user_id from Authorization header, or return 'system'."""
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            from gateway.auth import _decode_token
+            payload = _decode_token(auth.split(" ", 1)[1])
+            if payload:
+                return payload.get("sub", "system")
+        except Exception:
+            pass
+    return "system"
+
+
 # ─── Incident Management ───
 @app.get("/incidents")
-async def list_incidents():
-    """List all incidents."""
+async def list_incidents(request: Request):
+    """List incidents for the current user."""
+    user_id = _extract_user_id(request)
     merged = {}
 
     # Load from postgres
@@ -532,7 +550,6 @@ async def list_incidents():
     # Overlay in-memory state (has the most up-to-date status)
     for iid, mem_inc in _incidents_store.items():
         if iid in merged:
-            # Memory has fresher status — overlay key fields
             merged[iid]["status"] = mem_inc.get("status", merged[iid].get("status"))
             if mem_inc.get("root_cause"):
                 merged[iid]["root_cause"] = mem_inc["root_cause"]
@@ -542,8 +559,14 @@ async def list_incidents():
                 merged[iid]["completed_at"] = mem_inc["completed_at"]
             if mem_inc.get("agent_results"):
                 merged[iid]["agent_results"] = mem_inc["agent_results"]
+            if mem_inc.get("user_id"):
+                merged[iid]["user_id"] = mem_inc["user_id"]
         else:
             merged[iid] = mem_inc
+
+    # Filter by user_id — only show user's own incidents
+    if user_id != "system":
+        merged = {k: v for k, v in merged.items() if v.get("user_id", "system") == user_id}
 
     incidents = sorted(
         merged.values(),

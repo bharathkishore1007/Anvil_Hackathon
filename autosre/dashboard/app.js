@@ -32,15 +32,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ─── View Switching ───
 function switchView(name) {
+    if (name === 'integrations') { window.location.href = '/settings'; return; }
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     const view = document.getElementById(`view-${name}`);
     const nav = document.querySelector(`[data-view="${name}"]`);
     if (view) view.classList.add('active');
     if (nav) nav.classList.add('active');
-    const titles = { dashboard:'Dashboard', incidents:'Incidents', agents:'Agents', logs:'Activity Logs', integrations:'Integrations' };
+    const titles = { dashboard:'Dashboard', incidents:'Incidents', agents:'Agents', logs:'Activity Logs' };
     document.getElementById('pageTitle').textContent = titles[name] || name;
-    if (name === 'integrations') buildIntegrationsView();
 }
 
 // ─── Health & Status ───
@@ -125,11 +125,16 @@ function openOmium() { window.open(window._omiumUrl || 'https://app.omium.ai', '
 // ─── Incidents ───
 async function refreshIncidents() {
     try {
-        const res = await fetch(`${API}/incidents`);
+        const res = await fetch(`${API}/incidents`, {headers: authHeaders()});
         const data = await res.json();
         allIncidents = data.incidents || [];
         renderRecentIncidents();
         renderIncidentsList();
+        // Show welcome popup for new users
+        if (allIncidents.length === 0 && !sessionStorage.getItem('welcomeShown')) {
+            showWelcomePopup();
+            sessionStorage.setItem('welcomeShown', '1');
+        }
     } catch(e) { console.error('Refresh failed:', e); }
 }
 
@@ -385,7 +390,7 @@ async function fireSimulation() {
             severity: document.getElementById('simSeverity').value,
             source: document.getElementById('simSource').value,
         };
-        const res = await fetch(`${API}/incidents/simulate`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        const res = await fetch(`${API}/incidents/simulate`, { method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body:JSON.stringify(body) });
         const data = await res.json();
         closeModal();
         showToast(`Incident ${data.incident_id} fired!`, 'success');
@@ -528,3 +533,40 @@ async function changePassword() {
 
 // Init profile on load
 if (getToken()) initProfile();
+
+// ─── Welcome Popup (for new users) ───
+function showWelcomePopup() {
+    const user = JSON.parse(localStorage.getItem('autosre_user') || '{}');
+    const name = user.name || 'there';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'welcomePopup';
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:460px">
+            <div class="modal-header">
+                <h3>👋 Welcome, ${name}!</h3>
+                <button class="modal-close" onclick="document.getElementById('welcomePopup').remove()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body" style="text-align:center;padding:24px">
+                <div style="font-size:3rem;margin-bottom:12px">🚀</div>
+                <h3 style="margin-bottom:8px;color:var(--text-1)">Get Started with AutoSRE</h3>
+                <p style="color:var(--text-2);font-size:0.85rem;margin-bottom:20px;line-height:1.6">
+                    Configure your integrations (Slack, GitHub, Jira, Email) to enable autonomous incident resolution, 
+                    then simulate your first incident to see the AI agents in action.
+                </p>
+                <div style="display:flex;gap:10px;justify-content:center">
+                    <button class="btn-primary" onclick="window.location.href='/settings'" style="padding:10px 20px">
+                        🔗 Configure Integrations
+                    </button>
+                    <button class="btn-secondary" onclick="document.getElementById('welcomePopup').remove(); simulateIncident();" style="padding:10px 20px">
+                        ⚡ Simulate Incident
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
