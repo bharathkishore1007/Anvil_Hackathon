@@ -4,77 +4,197 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AutoSRE — Sign Up</title>
+    <meta name="description" content="Create your AutoSRE account — Start resolving incidents autonomously with AI">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="icon" type="image/png" href="/static/logo.png">
     <style>
-        :root{--bg-0:#0b0e14;--bg-1:#10141c;--bg-2:#161b26;--bg-3:#1c2233;--border:rgba(255,255,255,0.06);--text-1:#e8ecf4;--text-2:#8893a7;--text-3:#515c72;--accent:#63b3ed;--accent-dim:rgba(99,179,237,0.1);--red:#fc8181;--green:#68d391;--radius:12px;--font:'Inter',sans-serif}
+        :root{--bg-0:#060910;--bg-1:#0c1018;--bg-2:#111827;--bg-3:#1a2035;--border:rgba(255,255,255,0.06);--border-hover:rgba(255,255,255,0.12);--text-1:#f0f4fc;--text-2:#94a3b8;--text-3:#64748b;--accent:#38bdf8;--accent-2:#818cf8;--accent-glow:rgba(56,189,248,0.15);--red:#fb7185;--green:#34d399;--radius:14px;--font:'Inter',system-ui,sans-serif}
         *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:var(--font);background:var(--bg-0);color:var(--text-1);min-height:100vh;display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
-        .auth-container{width:100%;max-width:420px;padding:24px}
-        .auth-card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);padding:40px 36px;box-shadow:0 20px 60px rgba(0,0,0,0.4)}
-        .logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:32px}
-        .logo-svg{width:36px;height:36px}
-        .logo-text{font-size:1.5rem;font-weight:800;letter-spacing:-0.5px}.accent{color:var(--accent)}
-        .auth-title{text-align:center;font-size:1.1rem;font-weight:600;margin-bottom:6px}
-        .auth-sub{text-align:center;font-size:0.82rem;color:var(--text-3);margin-bottom:28px}
+        html,body{height:100%}
+        body{font-family:var(--font);background:var(--bg-0);color:var(--text-1);-webkit-font-smoothing:antialiased;overflow:hidden}
+
+        .auth-layout{display:flex;height:100vh;width:100vw}
+
+        /* ─── Left Panel ─── */
+        .brand-panel{flex:1;background:linear-gradient(135deg,#0c1222 0%,#0f172a 40%,#0c1830 100%);position:relative;display:flex;flex-direction:column;justify-content:center;padding:60px;overflow:hidden}
+        .brand-panel::before{content:'';position:absolute;top:-30%;right:-20%;width:600px;height:600px;border-radius:50%;background:radial-gradient(circle,rgba(129,140,248,0.08),transparent 70%);pointer-events:none}
+        .brand-panel::after{content:'';position:absolute;bottom:-20%;left:-10%;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(56,189,248,0.06),transparent 70%);pointer-events:none}
+
+        .brand-logo{display:flex;align-items:center;gap:14px;margin-bottom:48px}
+        .brand-logo img{width:52px;height:52px;object-fit:contain;filter:drop-shadow(0 0 20px rgba(56,189,248,0.3))}
+        .brand-logo-text{font-size:1.8rem;font-weight:900;letter-spacing:-0.5px}
+        .brand-logo-text span{background:linear-gradient(135deg,var(--accent),var(--accent-2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .brand-logo-sub{font-size:0.7rem;color:var(--text-3);text-transform:uppercase;letter-spacing:2px;font-weight:600;margin-top:2px}
+
+        .brand-headline{font-size:2.4rem;font-weight:800;line-height:1.2;letter-spacing:-1px;margin-bottom:16px}
+        .brand-headline .gradient{background:linear-gradient(135deg,var(--accent-2),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .brand-desc{font-size:0.95rem;color:var(--text-2);line-height:1.7;margin-bottom:44px;max-width:440px}
+
+        /* ─── Pipeline visual ─── */
+        .pipeline{position:relative;z-index:1}
+        .pipeline-title{font-size:0.7rem;color:var(--text-3);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:20px}
+        .pipeline-flow{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+        .pipeline-step{display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;font-size:0.78rem;font-weight:600;transition:all .3s;animation:stepPulse 4s ease-in-out infinite}
+        .pipeline-step:nth-child(1){animation-delay:0s;border-color:rgba(56,189,248,0.2)}
+        .pipeline-step:nth-child(2){animation-delay:0.5s;border-color:rgba(129,140,248,0.2)}
+        .pipeline-step:nth-child(3){animation-delay:1s;border-color:rgba(52,211,153,0.2)}
+        .pipeline-step:nth-child(4){animation-delay:1.5s;border-color:rgba(251,191,36,0.2)}
+        .pipeline-step:nth-child(5){animation-delay:2s;border-color:rgba(251,113,133,0.2)}
+        .pipeline-step:nth-child(6){animation-delay:2.5s;border-color:rgba(168,85,247,0.2)}
+        .pipeline-arrow{color:var(--text-3);font-size:0.7rem}
+        @keyframes stepPulse{0%,100%{opacity:0.7;transform:scale(1)}50%{opacity:1;transform:scale(1.02)}}
+
+        .stats-bar{display:flex;gap:32px;margin-top:44px;position:relative;z-index:1}
+        .stat{display:flex;flex-direction:column}
+        .stat-val{font-size:1.6rem;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent-2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+        .stat-label{font-size:0.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:0.8px;font-weight:600;margin-top:2px}
+
+        .grid-bg{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+        .orb{position:absolute;border-radius:50%;pointer-events:none;animation:float 8s ease-in-out infinite}
+        .orb-1{width:120px;height:120px;background:radial-gradient(circle,rgba(129,140,248,0.06),transparent);top:10%;left:60%;animation-delay:0s}
+        .orb-2{width:80px;height:80px;background:radial-gradient(circle,rgba(56,189,248,0.05),transparent);bottom:20%;left:20%;animation-delay:3s}
+        @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-20px)}}
+
+        /* ─── Right Panel ─── */
+        .form-panel{width:500px;display:flex;align-items:center;justify-content:center;padding:48px;background:var(--bg-1);border-left:1px solid var(--border);position:relative;overflow-y:auto}
+
+        .form-container{width:100%;max-width:380px;position:relative;z-index:1}
+        .form-header{margin-bottom:28px}
+        .form-title{font-size:1.4rem;font-weight:800;letter-spacing:-0.5px;margin-bottom:6px}
+        .form-sub{font-size:0.82rem;color:var(--text-3);line-height:1.5}
+
         .form-group{margin-bottom:18px}
-        .form-group label{display:block;font-size:0.72rem;color:var(--text-3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
-        .form-input{width:100%;padding:11px 14px;background:var(--bg-0);border:1px solid var(--border);border-radius:8px;color:var(--text-1);font-family:var(--font);font-size:0.88rem;outline:none;transition:border-color .2s}
-        .form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,179,237,0.1)}
+        .form-label{display:block;font-size:0.7rem;color:var(--text-3);margin-bottom:7px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px}
+        .form-input{width:100%;padding:12px 16px;background:var(--bg-0);border:1px solid var(--border);border-radius:10px;color:var(--text-1);font-family:var(--font);font-size:0.88rem;outline:none;transition:all .25s}
+        .form-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
         .form-input::placeholder{color:var(--text-3)}
         .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-        .btn-auth{width:100%;padding:12px;background:var(--accent);color:var(--bg-0);border:none;border-radius:8px;font-family:var(--font);font-weight:700;font-size:0.9rem;cursor:pointer;transition:all .2s;margin-top:8px}
-        .btn-auth:hover{background:#7cc4f0;box-shadow:0 4px 16px rgba(99,179,237,0.3)}
-        .btn-auth:disabled{opacity:0.5;cursor:not-allowed}
-        .auth-footer{text-align:center;margin-top:20px;font-size:0.8rem;color:var(--text-3)}
-        .auth-footer a{color:var(--accent);text-decoration:none;font-weight:600}
-        .auth-footer a:hover{text-decoration:underline}
-        .error-msg{background:rgba(252,129,129,0.1);border:1px solid rgba(252,129,129,0.2);color:var(--red);padding:10px 14px;border-radius:8px;font-size:0.8rem;margin-bottom:16px;display:none}
-        .pw-hint{font-size:0.7rem;color:var(--text-3);margin-top:4px}
-        .glow{position:fixed;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(99,179,237,0.08),transparent 70%);top:15%;left:50%;transform:translateX(-50%);pointer-events:none}
+        .pw-hint{font-size:0.68rem;color:var(--text-3);margin-top:5px;display:flex;align-items:center;gap:4px}
+
+        .btn-auth{width:100%;padding:13px;background:linear-gradient(135deg,var(--accent-2),var(--accent));color:#fff;border:none;border-radius:10px;font-family:var(--font);font-weight:700;font-size:0.9rem;cursor:pointer;transition:all .3s;margin-top:8px}
+        .btn-auth:hover{box-shadow:0 6px 24px rgba(129,140,248,0.3);transform:translateY(-1px)}
+        .btn-auth:active{transform:translateY(0)}
+        .btn-auth:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+
+        .auth-footer{text-align:center;margin-top:28px;font-size:0.82rem;color:var(--text-3)}
+        .auth-footer a{color:var(--accent);text-decoration:none;font-weight:600;transition:color .2s}
+        .auth-footer a:hover{color:var(--accent-2)}
+        .error-msg{background:rgba(251,113,133,0.08);border:1px solid rgba(251,113,133,0.15);color:var(--red);padding:11px 16px;border-radius:10px;font-size:0.8rem;margin-bottom:20px;display:none;line-height:1.5}
+
+        .terms{font-size:0.7rem;color:var(--text-3);text-align:center;margin-top:16px;line-height:1.6}
+        .terms a{color:var(--text-2);text-decoration:underline}
+
+        @media(max-width:900px){
+            .brand-panel{display:none}
+            .form-panel{width:100%;border-left:none}
+        }
     </style>
 </head>
 <body>
-    <div class="glow"></div>
-    <div class="auth-container">
-        <div class="auth-card">
-            <div class="logo">
-                <img src="/static/logo.png" alt="AutoSRE" style="width:42px;height:42px;object-fit:contain">
-                <div class="logo-text">Auto<span class="accent">SRE</span></div>
+    <div class="auth-layout">
+        <!-- ─── Branding Panel ─── -->
+        <div class="brand-panel">
+            <div class="grid-bg"></div>
+            <div class="orb orb-1"></div>
+            <div class="orb orb-2"></div>
+
+            <div class="brand-logo">
+                <img src="/static/logo.png" alt="AutoSRE">
+                <div>
+                    <div class="brand-logo-text">Auto<span>SRE</span></div>
+                    <div class="brand-logo-sub">Autonomous Incident Resolution</div>
+                </div>
             </div>
-            <div class="auth-title">Create your account</div>
-            <div class="auth-sub">Get started with autonomous incident resolution</div>
-            <div class="error-msg" id="errorMsg"></div>
-            <form onsubmit="handleSignup(event)">
-                <div class="form-group">
-                    <label>Full Name</label>
-                    <input type="text" id="name" class="form-input" placeholder="John Doe" required>
+
+            <h1 class="brand-headline">
+                Your on-call team,<br><span class="gradient">powered by AI agents</span>
+            </h1>
+            <p class="brand-desc">
+                Join teams using AutoSRE to detect, diagnose, and resolve production incidents autonomously — reducing MTTR from hours to seconds.
+            </p>
+
+            <div class="pipeline">
+                <div class="pipeline-title">Autonomous Resolution Pipeline</div>
+                <div class="pipeline-flow">
+                    <div class="pipeline-step">🧠 Planner</div>
+                    <span class="pipeline-arrow">→</span>
+                    <div class="pipeline-step">📊 Analyst</div>
+                    <span class="pipeline-arrow">→</span>
+                    <div class="pipeline-step">🔍 Researcher</div>
+                    <span class="pipeline-arrow">→</span>
+                    <div class="pipeline-step">💻 Coder</div>
+                    <span class="pipeline-arrow">→</span>
+                    <div class="pipeline-step">⚡ Executor</div>
+                    <span class="pipeline-arrow">→</span>
+                    <div class="pipeline-step">📢 Communicator</div>
                 </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" id="email" class="form-input" placeholder="you@company.com" required autocomplete="email">
+            </div>
+
+            <div class="stats-bar">
+                <div class="stat">
+                    <div class="stat-val">~30s</div>
+                    <div class="stat-label">Avg Resolution</div>
                 </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" id="password" class="form-input" placeholder="••••••••" required minlength="6" autocomplete="new-password">
-                    <div class="pw-hint">Minimum 6 characters</div>
+                <div class="stat">
+                    <div class="stat-val">6</div>
+                    <div class="stat-label">AI Agents</div>
                 </div>
-                <div class="form-group">
-                    <label>Confirm Password</label>
-                    <input type="password" id="confirmPassword" class="form-input" placeholder="••••••••" required autocomplete="new-password">
+                <div class="stat">
+                    <div class="stat-val">24/7</div>
+                    <div class="stat-label">Always On</div>
                 </div>
-                <button type="submit" class="btn-auth" id="btnSubmit">Create Account</button>
-            </form>
-            <div class="auth-footer">
-                Already have an account? <a href="/login">Sign in</a>
+                <div class="stat">
+                    <div class="stat-val">AES-256</div>
+                    <div class="stat-label">Encrypted</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Form Panel ─── -->
+        <div class="form-panel">
+            <div class="form-container">
+                <div class="form-header">
+                    <div class="form-title">Create your account 🚀</div>
+                    <div class="form-sub">Start resolving incidents autonomously in minutes</div>
+                </div>
+
+                <div class="error-msg" id="errorMsg"></div>
+
+                <form onsubmit="handleSignup(event)" id="signupForm">
+                    <div class="form-group">
+                        <label class="form-label">Full Name</label>
+                        <input type="text" id="name" class="form-input" placeholder="John Doe" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Work Email</label>
+                        <input type="email" id="email" class="form-input" placeholder="you@company.com" required autocomplete="email">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" id="password" class="form-input" placeholder="Create a strong password" required minlength="6" autocomplete="new-password">
+                        <div class="pw-hint">🔒 Minimum 6 characters, stored with bcrypt encryption</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Confirm Password</label>
+                        <input type="password" id="confirmPassword" class="form-input" placeholder="Re-enter your password" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn-auth" id="btnSubmit">Create Account →</button>
+                </form>
+
+                <div class="terms">
+                    By signing up, you agree to AutoSRE's<br>Terms of Service and Privacy Policy
+                </div>
+
+                <div class="auth-footer">
+                    Already have an account? <a href="/login">Sign in →</a>
+                </div>
             </div>
         </div>
     </div>
+
     <script>
-        if (localStorage.getItem('autosre_token')) {
-            window.location.href = '/';
-        }
+        if (localStorage.getItem('autosre_token')) window.location.href = '/';
 
         async function handleSignup(e) {
             e.preventDefault();
@@ -103,7 +223,7 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    err.textContent = data.detail || 'Signup failed';
+                    err.textContent = data.detail || 'Registration failed. Please try again.';
                     err.style.display = 'block';
                     return;
                 }
@@ -111,10 +231,10 @@
                 localStorage.setItem('autosre_user', JSON.stringify(data.user));
                 window.location.href = '/';
             } catch (e) {
-                err.textContent = 'Connection error: ' + e.message;
+                err.textContent = 'Connection error. Please check your network.';
                 err.style.display = 'block';
             } finally {
-                btn.disabled = false; btn.textContent = 'Create Account';
+                btn.disabled = false; btn.textContent = 'Create Account →';
             }
         }
     </script>
