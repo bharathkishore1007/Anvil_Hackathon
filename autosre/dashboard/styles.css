@@ -239,3 +239,25 @@ body{font-family:var(--font);background:var(--bg-0);color:var(--text-1);display:
 /* ─── Logout Button ─── */
 .logout-btn{display:flex;align-items:center;gap:6px;width:100%;padding:7px 10px;background:rgba(252,129,129,0.06);border:1px solid rgba(252,129,129,0.1);border-radius:var(--radius-sm);color:var(--text-3);font-family:var(--font);font-size:0.72rem;font-weight:500;cursor:pointer;transition:all .2s}
 .logout-btn:hover{background:rgba(252,129,129,0.12);color:var(--red);border-color:rgba(252,129,129,0.2)}
+
+/* ─── Profile Dropdown ─── */
+.profile-wrapper{position:relative}
+.profile-btn{display:flex;align-items:center;gap:6px;padding:4px 8px 4px 4px;background:var(--bg-3);border:1px solid var(--border);border-radius:20px;cursor:pointer;transition:all .2s;color:var(--text-2)}
+.profile-btn:hover{border-color:var(--border-hover);background:var(--bg-4)}
+.profile-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#63b3ed,#b794f4);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:0.78rem;flex-shrink:0}
+.profile-dropdown{position:absolute;top:calc(100% + 8px);right:0;width:240px;background:var(--bg-1);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 12px 40px rgba(0,0,0,0.5);z-index:500;display:none;animation:dropIn .15s ease}
+.profile-dropdown.open{display:block}
+@keyframes dropIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.profile-info{padding:14px 16px}
+.profile-name{font-size:0.88rem;font-weight:600;color:var(--text-1)}
+.profile-email{font-size:0.72rem;color:var(--text-3);margin-top:2px}
+.profile-divider{height:1px;background:var(--border);margin:0}
+.profile-menu-item{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:0.8rem;color:var(--text-2);cursor:pointer;transition:all .15s;text-decoration:none}
+.profile-menu-item:hover{background:rgba(255,255,255,0.04);color:var(--text-1)}
+.profile-menu-item.danger{color:var(--text-3)}
+.profile-menu-item.danger:hover{background:rgba(252,129,129,0.06);color:var(--red)}
+
+/* ─── Password Modal extras ─── */
+.pw-error{background:rgba(252,129,129,0.1);border:1px solid rgba(252,129,129,0.2);color:var(--red);padding:8px 12px;border-radius:var(--radius-sm);font-size:0.78rem;margin-bottom:12px}
+.pw-success{background:rgba(104,211,145,0.1);border:1px solid rgba(104,211,145,0.2);color:var(--green);padding:8px 12px;border-radius:var(--radius-sm);font-size:0.78rem;margin-bottom:12px}
+

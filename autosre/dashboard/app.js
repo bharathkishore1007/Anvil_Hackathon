@@ -448,3 +448,83 @@ function toggleSidebar() {
     main.classList.toggle('sidebar-collapsed');
     toggle.classList.toggle('collapsed');
 }
+
+// ─── Profile Dropdown ───
+function initProfile() {
+    const user = JSON.parse(localStorage.getItem('autosre_user') || '{}');
+    const name = user.name || 'User';
+    const email = user.email || '';
+    document.getElementById('profileAvatar').textContent = name[0].toUpperCase();
+    document.getElementById('profileName').textContent = name;
+    document.getElementById('profileEmail').textContent = email;
+}
+
+function toggleProfileMenu() {
+    const dd = document.getElementById('profileDropdown');
+    dd.classList.toggle('open');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const wrapper = document.getElementById('profileWrapper');
+    const dd = document.getElementById('profileDropdown');
+    if (wrapper && dd && !wrapper.contains(e.target)) {
+        dd.classList.remove('open');
+    }
+});
+
+// ─── Password Change ───
+function openPasswordModal() {
+    document.getElementById('profileDropdown').classList.remove('open');
+    document.getElementById('passwordModal').style.display = 'flex';
+    document.getElementById('pwError').style.display = 'none';
+    document.getElementById('pwSuccess').style.display = 'none';
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').style.display = 'none';
+}
+
+async function changePassword() {
+    const err = document.getElementById('pwError');
+    const ok = document.getElementById('pwSuccess');
+    err.style.display = 'none'; ok.style.display = 'none';
+
+    const current = document.getElementById('pwCurrent').value;
+    const newPw = document.getElementById('pwNew').value;
+    const confirm = document.getElementById('pwConfirm').value;
+
+    if (!current || !newPw) { err.textContent = 'All fields required'; err.style.display = 'block'; return; }
+    if (newPw.length < 6) { err.textContent = 'New password must be at least 6 characters'; err.style.display = 'block'; return; }
+    if (newPw !== confirm) { err.textContent = 'Passwords do not match'; err.style.display = 'block'; return; }
+
+    const btn = document.getElementById('btnChangePw');
+    btn.disabled = true; btn.textContent = 'Updating…';
+
+    try {
+        const res = await fetch('/auth/change-password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}`},
+            body: JSON.stringify({current_password: current, new_password: newPw}),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            err.textContent = data.detail || 'Failed to change password';
+            err.style.display = 'block';
+        } else {
+            ok.textContent = 'Password updated successfully!';
+            ok.style.display = 'block';
+            setTimeout(closePasswordModal, 1500);
+        }
+    } catch (e) {
+        err.textContent = 'Connection error'; err.style.display = 'block';
+    } finally {
+        btn.disabled = false; btn.textContent = 'Update Password';
+    }
+}
+
+// Init profile on load
+if (getToken()) initProfile();

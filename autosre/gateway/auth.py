@@ -196,3 +196,43 @@ async def login(req: LoginRequest):
 async def get_me(user: dict = Depends(get_current_user)):
     """Get current user info."""
     return {"user": user}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+async def change_password(req: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    """Change the current user's password."""
+    pg = _get_db()
+    conn = pg._get_conn()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    # Get current hash
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM users WHERE id = %s", (user["id"],))
+            row = cur.fetchone()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Verify current password
+    if not _verify_password(req.current_password, row[0]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    # Update password
+    new_hash = _hash_password(req.new_password)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user["id"]))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    logger.info(f"Password changed for user {user['email']}")
+    return {"message": "Password updated successfully"}
