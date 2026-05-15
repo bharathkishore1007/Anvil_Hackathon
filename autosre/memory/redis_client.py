@@ -19,12 +19,16 @@ class RedisClient:
         self._client = None
         try:
             import redis
-            self._client = redis.Redis.from_url(
-                settings.REDIS_URL, decode_responses=True,
-                socket_connect_timeout=2, socket_timeout=2,
-            )
+            url = settings.REDIS_URL
+            # Upstash uses rediss:// (TLS)
+            ssl = url.startswith("rediss://")
+            kwargs = dict(decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
+            if ssl:
+                import ssl as ssl_mod
+                kwargs["ssl_cert_reqs"] = ssl_mod.CERT_NONE
+            self._client = redis.Redis.from_url(url, **kwargs)
             self._client.ping()
-            logger.info("Redis connected")
+            logger.info(f"Redis connected {'(TLS)' if ssl else ''}")
         except Exception as e:
             logger.warning(f"Redis unavailable: {e} — using in-memory fallback")
             self._client = None

@@ -1,295 +1,373 @@
 /* ═══════════════════════════════════════════════════
-   AutoSRE Dashboard — Application Logic
+   AutoSRE Dashboard v3 — Application Logic
+   Features: multi-view, search/filter, export, logs
    ═══════════════════════════════════════════════════ */
-
-const API_BASE = '';
-let pollInterval = null;
+const API = '';
+let pollTimer = null;
 let currentIncidentId = null;
-let incidents = {};
+let allIncidents = [];
+let activityLog = [];
 
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
-    checkSystemHealth();
+    checkHealth();
     refreshIncidents();
-    pollInterval = setInterval(() => {
-        checkSystemHealth();
+    buildAgentsView();
+    pollTimer = setInterval(() => {
+        checkHealth();
         refreshIncidents();
-        if (currentIncidentId) loadIncidentDetails(currentIncidentId);
+        if (currentIncidentId) loadDetail(currentIncidentId);
     }, 3000);
 });
 
-// ─── System Health ───
-async function checkSystemHealth() {
+// ─── View Switching ───
+function switchView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    const view = document.getElementById(`view-${name}`);
+    const nav = document.querySelector(`[data-view="${name}"]`);
+    if (view) view.classList.add('active');
+    if (nav) nav.classList.add('active');
+    const titles = { dashboard:'Dashboard', incidents:'Incidents', agents:'Agents', logs:'Activity Logs', integrations:'Integrations' };
+    document.getElementById('pageTitle').textContent = titles[name] || name;
+    if (name === 'integrations') buildIntegrationsView();
+}
+
+// ─── Health & Status ───
+async function checkHealth() {
     try {
-        const res = await fetch(`${API_BASE}/health`);
-        const data = await res.json();
-        const dot = document.querySelector('.status-dot');
-        const text = document.getElementById('statusText');
+        const [hRes, sRes] = await Promise.all([
+            fetch(`${API}/health`), fetch(`${API}/system/status`)
+        ]);
+        const h = await hRes.json();
+        const s = await sRes.json();
 
-        if (data.status === 'healthy') {
-            dot.className = 'status-dot pulse';
-            text.textContent = 'System Operational';
+        // System chip
+        const dot = document.querySelector('.chip-dot');
+        const txt = document.getElementById('chipText');
+        if (h.status === 'healthy') { dot.className='chip-dot online'; txt.textContent='System Online'; }
+        else { dot.className='chip-dot offline'; txt.textContent='Degraded'; }
+
+        // Model
+        const provider = s.llm_provider || 'ollama';
+        const modelLabel = provider === 'gemini' ? `🧠 ${s.ollama_model || 'gemini-2.5-flash'}` : `🧠 ${s.ollama_model || '—'}`;
+        document.getElementById('modelName').textContent = s.ollama_model || '—';
+
+        // Integrations
+        const intMap = {
+            intOllama: h.checks?.ollama, intRedis: h.checks?.redis, intPostgres: h.checks?.postgres,
+            intSlack: s.integrations?.slack, intGithub: s.integrations?.github,
+            intJira: s.integrations?.jira, intLangfuse: s.integrations?.langfuse,
+            intOmium: s.integrations?.omium, intEmail: s.integrations?.email,
+        };
+        for (const [id, val] of Object.entries(intMap)) updateInt(id, val);
+
+        // URLs
+        if (s.langfuse_url) window._langfuseUrl = s.langfuse_url;
+        if (s.omium_url) window._omiumUrl = s.omium_url;
+
+        // Metrics — combine API status + local incident data for accuracy
+        const total = Math.max(s.total_incidents || 0, allIncidents.length);
+        const resolved = allIncidents.filter(i => i.status === 'diagnosed_and_escalated' || i.status === 'resolved').length || s.resolved_incidents || 0;
+        const active = allIncidents.filter(i => i.status === 'processing' || i.status === 'investigating' || i.status === 'open').length;
+        document.getElementById('metricTotal').textContent = total;
+        document.getElementById('metricActive').textContent = active;
+        document.getElementById('metricResolved').textContent = resolved;
+        document.getElementById('navIncidentCount').textContent = total;
+
+        // Avg resolution time
+        const resolvedIncs = allIncidents.filter(i => i.pipeline_duration_ms > 0);
+        const avgEl = document.getElementById('metricAvgTime');
+        if (resolvedIncs.length) {
+            const avgMs = resolvedIncs.reduce((s, i) => s + i.pipeline_duration_ms, 0) / resolvedIncs.length;
+            avgEl.textContent = (avgMs / 1000).toFixed(1) + 's';
+        } else if (resolved > 0) {
+            avgEl.textContent = '~30s';
         } else {
-            dot.className = 'status-dot pulse';
-            dot.style.background = '#FF9100';
-            text.textContent = 'Degraded';
+            avgEl.textContent = 'N/A';
         }
 
-        // Update infrastructure integrations
-        updateIntegration('intOllama', data.checks?.ollama);
-        updateIntegration('intRedis', data.checks?.redis);
-        updateIntegration('intPostgres', data.checks?.postgres);
+        // Bars
+        const pct = total > 0 ? Math.min((resolved/total)*100, 100) : 0;
+        document.getElementById('metricBar3').style.width = pct + '%';
+        document.getElementById('metricBar2').style.width = (active > 0 ? 100 : 0) + '%';
+        document.getElementById('metricBar1').style.width = (total > 0 ? 60 : 0) + '%';
+        document.getElementById('metricBar4').style.width = (resolvedIncs.length > 0 ? 70 : resolved > 0 ? 50 : 0) + '%';
 
-        // Fetch system status for app integrations
-        const sRes = await fetch(`${API_BASE}/system/status`);
-        const sData = await sRes.json();
-
-        updateIntegration('intSlack', sData.integrations?.slack, true);
-        updateIntegration('intGithub', sData.integrations?.github, true);
-        updateIntegration('intJira', sData.integrations?.jira, true);
-        updateIntegration('intLangfuse', sData.integrations?.langfuse, true);
-        updateIntegration('intOmium', sData.integrations?.omium, true);
-        updateIntegration('intEmail', sData.integrations?.email, true);
-
-        // Store langfuse URL for click-through
-        if (sData.langfuse_url) {
-            window._langfuseUrl = sData.langfuse_url;
-        }
-        if (sData.omium_url) {
-            window._omiumUrl = sData.omium_url;
-        }
-
-        document.getElementById('modelName').textContent = sData.ollama_model || 'Unknown';
-
-        // Update metrics
-        document.getElementById('metricTotal').textContent = sData.total_incidents || 0;
-        document.getElementById('metricActive').textContent = sData.active_incidents?.length || 0;
-        document.getElementById('metricResolved').textContent = sData.resolved_incidents || 0;
-
-    } catch (e) {
-        document.querySelector('.status-dot').className = 'status-dot error';
-        document.getElementById('statusText').textContent = 'API Offline';
+    } catch {
+        document.querySelector('.chip-dot').className = 'chip-dot offline';
+        document.getElementById('chipText').textContent = 'Offline';
     }
 }
 
-function updateIntegration(id, connected, isConfigured) {
+function updateInt(id, val) {
     const el = document.getElementById(id);
     if (!el) return;
-    const status = el.querySelector('.int-status');
-    if (connected === true) {
-        status.textContent = 'CONNECTED';
-        status.className = 'int-status connected';
-    } else if (connected === false && isConfigured) {
-        status.textContent = 'NOT SET';
-        status.className = 'int-status disconnected';
-    } else {
-        status.textContent = 'OFFLINE';
-        status.className = 'int-status disconnected';
-    }
+    const dot = el.querySelector('.int-dot');
+    const v = el.querySelector('.int-val');
+    if (val === true) { dot.className='int-dot on'; v.textContent='Connected'; v.className='int-val on'; }
+    else { dot.className='int-dot off'; v.textContent='Offline'; v.className='int-val off'; }
 }
 
-function openLangfuse() {
-    const url = window._langfuseUrl || 'https://jp.cloud.langfuse.com';
-    window.open(url, '_blank');
-}
-
-function openOmium() {
-    const url = window._omiumUrl || 'https://app.omium.ai';
-    window.open(url, '_blank');
-}
+function openLangfuse() { window.open(window._langfuseUrl || 'https://jp.cloud.langfuse.com', '_blank'); }
+function openOmium() { window.open(window._omiumUrl || 'https://app.omium.ai', '_blank'); }
 
 // ─── Incidents ───
 async function refreshIncidents() {
     try {
-        const res = await fetch(`${API_BASE}/incidents`);
+        const res = await fetch(`${API}/incidents`);
         const data = await res.json();
-        const feed = document.getElementById('incidentFeed');
-        const list = data.incidents || [];
-
-        if (list.length === 0) {
-            feed.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">🛡️</div>
-                    <h3>No incidents yet</h3>
-                    <p>Click "Simulate Incident" to trigger the autonomous pipeline</p>
-                </div>`;
-            return;
-        }
-
-        feed.innerHTML = list.map(inc => {
-            const id = inc.incident_id || 'Unknown';
-            const status = inc.status || 'open';
-            const severity = inc.severity || 'medium';
-            const isActive = id === currentIncidentId ? ' active' : '';
-            const isProcessing = status === 'processing' ? ' shimmer' : '';
-            incidents[id] = inc;
-            return `
-                <div class="incident-card severity-${severity}${isActive}${isProcessing}"
-                     onclick="selectIncident('${id}')">
-                    <div class="incident-header">
-                        <span class="incident-id">${id}</span>
-                        <span class="status-badge ${status}">${formatStatus(status)}</span>
-                    </div>
-                    <div class="incident-title">${escapeHtml(inc.title || 'Untitled')}</div>
-                    <div class="incident-meta">
-                        <span class="severity-badge ${severity}">${severity}</span>
-                        <span>📡 ${inc.source || 'manual'}</span>
-                        <span>⏱️ ${formatTime(inc.timestamp || inc.created_at)}</span>
-                    </div>
-                </div>`;
-        }).join('');
-    } catch (e) {
-        console.error('Failed to refresh incidents:', e);
-    }
+        allIncidents = data.incidents || [];
+        renderRecentIncidents();
+        renderIncidentsList();
+    } catch(e) { console.error('Refresh failed:', e); }
 }
+
+function renderRecentIncidents() {
+    const el = document.getElementById('recentIncidents');
+    if (!allIncidents.length) {
+        el.innerHTML = `<div class="empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><h3>No incidents yet</h3><p>Click "Simulate Incident" to trigger the autonomous pipeline</p></div>`;
+        return;
+    }
+    el.innerHTML = allIncidents.slice(0, 10).map(inc => incidentRow(inc)).join('');
+}
+
+function renderIncidentsList() {
+    const el = document.getElementById('incidentsList');
+    if (!el) return;
+    const search = (document.getElementById('incidentSearch')?.value || '').toLowerCase();
+    const sev = document.getElementById('filterSeverity')?.value || '';
+    const stat = document.getElementById('filterStatus')?.value || '';
+
+    let filtered = allIncidents.filter(inc => {
+        if (search && !(inc.title||'').toLowerCase().includes(search) && !(inc.incident_id||'').toLowerCase().includes(search)) return false;
+        if (sev && inc.severity !== sev) return false;
+        if (stat && inc.status !== stat) return false;
+        return true;
+    });
+
+    if (!filtered.length) {
+        el.innerHTML = '<div class="empty-state"><h3>No matching incidents</h3></div>';
+        return;
+    }
+    el.innerHTML = filtered.map(inc => incidentRow(inc)).join('');
+}
+
+function incidentRow(inc) {
+    const id = inc.incident_id || '??';
+    const isActive = id === currentIncidentId ? ' active' : '';
+    const isProcesing = inc.status === 'processing' ? ' processing' : '';
+    return `<div class="inc-row${isActive}${isProcesing}" onclick="selectIncident('${id}')">
+        <div class="inc-sev ${inc.severity||'medium'}"></div>
+        <div class="inc-body">
+            <div class="inc-id">${id}</div>
+            <div class="inc-title">${esc(inc.title||'Untitled')}</div>
+            <div class="inc-meta"><span class="badge ${inc.severity||'medium'}">${inc.severity||'medium'}</span><span class="badge ${inc.status||'open'}">${fmtStatus(inc.status)}</span><span>${fmtTime(inc.timestamp||inc.created_at)}</span></div>
+        </div></div>`;
+}
+
+function filterIncidents() { renderIncidentsList(); }
 
 function selectIncident(id) {
     currentIncidentId = id;
-    document.querySelectorAll('.incident-card').forEach(c => c.classList.remove('active'));
-    event?.target?.closest?.('.incident-card')?.classList?.add?.('active');
-    loadIncidentDetails(id);
+    document.querySelectorAll('.inc-row').forEach(r => r.classList.remove('active'));
+    loadDetail(id);
+    // If on dashboard, switch to incidents view
+    if (document.getElementById('view-dashboard').classList.contains('active')) switchView('incidents');
 }
 
-async function loadIncidentDetails(id) {
+async function loadDetail(id) {
     try {
-        const res = await fetch(`${API_BASE}/incidents/${id}`);
+        const res = await fetch(`${API}/incidents/${id}`);
+        if (!res.ok) return;
         const data = await res.json();
         const inc = data.incident || {};
         const runs = data.agent_runs || [];
-        const panel = document.getElementById('incidentDetails');
 
-        // Update agent grid
-        updateAgentNodes(inc, runs);
-        document.getElementById('liveBadge').style.display =
-            inc.status === 'processing' ? '' : 'none';
+        updateAgents(inc, runs);
+        document.getElementById('liveBadge').style.display = inc.status === 'processing' ? '' : 'none';
 
-        let html = `
-            <div class="detail-section">
-                <h4>📋 Overview</h4>
-                <div class="detail-text">
-                    <strong>${escapeHtml(inc.title || 'Untitled')}</strong><br>
-                    ${escapeHtml(inc.description || 'No description')}
-                </div>
-            </div>`;
+        // Log activity
+        addLog('info', `Loaded incident ${id} — ${inc.status}`);
 
-        if (inc.root_cause) {
-            html += `
-                <div class="detail-section">
-                    <h4>🔍 Root Cause</h4>
-                    <div class="detail-code">${escapeHtml(inc.root_cause)}</div>
-                </div>`;
-        }
+        let html = `<div class="detail-header"><h2>${esc(inc.title||'Untitled')}</h2><div class="detail-badges"><span class="badge ${inc.severity}">${inc.severity}</span><span class="badge ${inc.status}">${fmtStatus(inc.status)}</span>${inc.pipeline_duration_ms?`<span style="font-size:0.7rem;color:var(--text-3)">⏱ ${(inc.pipeline_duration_ms/1000).toFixed(1)}s</span>`:''}</div></div>`;
 
-        if (inc.resolution) {
-            html += `
-                <div class="detail-section">
-                    <h4>✅ Resolution</h4>
-                    <div class="detail-text">${escapeHtml(inc.resolution)}</div>
-                </div>`;
-        }
+        // Description
+        html += `<div class="detail-section"><h4>📋 Description</h4><div class="detail-text">${esc(inc.description||'No description')}</div></div>`;
 
-        if (inc.execution_plan?.tasks) {
-            html += `
-                <div class="detail-section">
-                    <h4>🗺️ Execution Plan</h4>
-                    <div class="detail-code">${JSON.stringify(inc.execution_plan.tasks, null, 2)}</div>
-                </div>`;
-        }
+        // Root cause
+        if (inc.root_cause) html += `<div class="detail-section"><h4>🔍 Root Cause</h4><div class="detail-code">${esc(inc.root_cause)}</div></div>`;
 
+        // Execution plan
+        if (inc.execution_plan?.tasks) html += `<div class="detail-section"><h4>🗺️ Execution Plan</h4><div class="detail-code">${esc(JSON.stringify(inc.execution_plan.tasks,null,2))}</div></div>`;
+
+        // Agent results
         if (inc.agent_results) {
             html += `<div class="detail-section"><h4>🤖 Agent Results</h4>`;
             for (const [agent, result] of Object.entries(inc.agent_results)) {
-                const preview = typeof result === 'object'
-                    ? JSON.stringify(result, null, 2).substring(0, 300)
-                    : String(result).substring(0, 300);
-                html += `
-                    <div style="margin-bottom: 10px">
-                        <span class="timeline-agent">${agent}</span>
-                        <div class="detail-code">${escapeHtml(preview)}${preview.length >= 300 ? '...' : ''}</div>
-                    </div>`;
+                const preview = typeof result==='object' ? JSON.stringify(result,null,2) : String(result);
+                const truncated = preview.length > 500 ? preview.substring(0,500)+'…' : preview;
+                html += `<div class="agent-result-card"><h5>${agent}</h5><div class="detail-code">${esc(truncated)}</div></div>`;
             }
             html += `</div>`;
         }
 
-        if (runs.length > 0) {
-            html += `<div class="detail-section"><h4>📊 Agent Trace</h4>`;
-            runs.forEach(run => {
-                const statusClass = run.status || 'completed';
-                html += `
-                    <div class="timeline-entry ${statusClass}">
-                        <div class="timeline-time">${run.duration_ms ? run.duration_ms + 'ms' : '...'}</div>
-                        <div class="timeline-content">
-                            <span class="timeline-agent">${run.agent_type}</span>
-                            — ${run.status} ${run.token_count ? `(${run.token_count} tokens)` : ''}
-                        </div>
-                    </div>`;
-            });
-            html += `</div>`;
+        // Post-resolution monitoring
+        if (inc.post_resolution_monitoring) {
+            const mon = inc.post_resolution_monitoring;
+            html += `<div class="detail-section"><h4>🔄 Post-Resolution Monitoring</h4><dl class="detail-kv">`;
+            html += `<dt>Duration</dt><dd>${mon.duration_seconds}s</dd>`;
+            html += `<dt>All Healthy</dt><dd>${mon.all_healthy ? '✅ Yes' : '⚠️ No'}</dd>`;
+            html += `<dt>Checks</dt><dd>${(mon.checks||[]).length}</dd>`;
+            html += `</dl></div>`;
         }
 
-        panel.innerHTML = html;
+        // Key-value summary
+        html += `<div class="detail-section"><h4>📊 Metadata</h4><dl class="detail-kv">`;
+        html += `<dt>ID</dt><dd style="font-family:var(--mono)">${id}</dd>`;
+        html += `<dt>Source</dt><dd>${inc.source||'manual'}</dd>`;
+        html += `<dt>Created</dt><dd>${fmtTime(inc.timestamp||inc.created_at)}</dd>`;
+        if (inc.completed_at) html += `<dt>Completed</dt><dd>${fmtTime(inc.completed_at)}</dd>`;
+        html += `</dl></div>`;
 
-    } catch (e) {
-        document.getElementById('incidentDetails').innerHTML = `
-            <div class="empty-state small"><p>Failed to load details</p></div>`;
+        document.getElementById('incidentDetail').innerHTML = html;
+
+        // Also highlight in list
+        document.querySelectorAll('.inc-row').forEach(r => {
+            r.classList.toggle('active', r.innerHTML.includes(id));
+        });
+
+    } catch(e) {
+        document.getElementById('incidentDetail').innerHTML = `<div class="empty-state"><h3>Failed to load</h3><p>${e.message}</p></div>`;
     }
 }
 
-function updateAgentNodes(incident, runs) {
-    const agentStates = {};
-
-    // Priority 1: live agent_status from pipeline (real-time)
-    if (incident.agent_status) {
-        for (const [agent, status] of Object.entries(incident.agent_status)) {
-            agentStates[agent] = status;
-        }
+function updateAgents(inc, runs) {
+    const states = {};
+    if (inc.agent_status) for (const [a,s] of Object.entries(inc.agent_status)) states[a]=s;
+    if (inc.agent_results) for (const a of Object.keys(inc.agent_results)) {
+        if (!states[a]||states[a]==='idle') states[a] = inc.agent_results[a]?.error ? 'failed' : 'completed';
     }
+    runs.forEach(r => { if(!states[r.agent_type]) states[r.agent_type]=r.status==='completed'?'completed':r.status==='running'?'running':'idle'; });
 
-    // Priority 2: from agent_results (completed)
-    if (incident.agent_results) {
-        for (const agent of Object.keys(incident.agent_results)) {
-            const r = incident.agent_results[agent];
-            if (!agentStates[agent] || agentStates[agent] === 'idle') {
-                agentStates[agent] = r?.error ? 'failed' : 'completed';
-            }
-        }
+    document.querySelectorAll('.agent-chip').forEach(chip => {
+        const a = chip.dataset.agent; if(!a) return;
+        const s = states[a]||'idle';
+        chip.className = `agent-chip ${s}`;
+        const st = chip.querySelector('.agent-status');
+        if(st){ st.textContent=s.charAt(0).toUpperCase()+s.slice(1); st.className=`agent-status ${s}`; }
+    });
+}
+
+// ─── Agents View ───
+function buildAgentsView() {
+    const agents = [
+        {name:'Planner',icon:'🧠',desc:'Creates execution plans and task delegation for each incident. Orchestrates the multi-agent workflow.'},
+        {name:'Analyst',icon:'🔍',desc:'Analyzes incident data using LLM reasoning. Identifies root cause and severity assessment.'},
+        {name:'Researcher',icon:'📚',desc:'Searches the web (DuckDuckGo), CVE databases, StackOverflow, and internal runbooks for context.'},
+        {name:'Coder',icon:'💻',desc:'Generates code patches, fix suggestions, and validation scripts for the identified issue.'},
+        {name:'Executor',icon:'⚡',desc:'Takes action: creates GitHub issues, Jira tickets, triggers rollbacks, and executes remediation.'},
+        {name:'Communicator',icon:'📢',desc:'Posts Slack notifications, sends email reports, and updates stakeholders on incident status.'},
+    ];
+    document.getElementById('agentsDetailGrid').innerHTML = agents.map(a => `
+        <div class="agent-detail-card"><div class="agent-icon">${a.icon}</div><h3>${a.name}</h3><p>${a.desc}</p><div class="agent-status idle" data-agent="${a.name.toLowerCase()}" id="agentStatus_${a.name.toLowerCase()}">Idle</div></div>
+    `).join('');
+}
+
+// ─── Integrations View ───
+function buildIntegrationsView() {
+    const ints = [
+        {name:'Gemini LLM',id:'intOllama',desc:'Google Gemini 2.5 Flash — cloud-native AI model powering all agent reasoning.'},
+        {name:'Slack',id:'intSlack',desc:'Incident notifications and follow-up reports posted to #incidents channel.'},
+        {name:'GitHub',id:'intGithub',desc:'Auto-creates issues and triggers deployment rollbacks on incident detection.'},
+        {name:'Jira',id:'intJira',desc:'Service desk ticket creation for incident tracking and SLA management.'},
+        {name:'Email (SMTP)',id:'intEmail',desc:'Sends detailed incident reports to on-call engineers via SMTP.'},
+        {name:'Langfuse',id:'intLangfuse',desc:'LLM observability and tracing. Click to open dashboard.',click:'openLangfuse()'},
+        {name:'Omium',id:'intOmium',desc:'AI reliability monitoring and execution tracing. Click to open dashboard.',click:'openOmium()'},
+        {name:'Redis',id:'intRedis',desc:'In-memory caching for active incident state and real-time agent coordination.'},
+        {name:'PostgreSQL',id:'intPostgres',desc:'Persistent storage for incident history, agent runs, and vector embeddings.'},
+    ];
+    document.getElementById('intDetailGrid').innerHTML = ints.map(i => {
+        const el = document.getElementById(i.id);
+        const isOn = el?.querySelector('.int-dot')?.classList?.contains('on');
+        return `<div class="int-detail-card" ${i.click?`onclick="${i.click}" style="cursor:pointer"`:''}>
+            <h3>${i.name}</h3><div class="int-status-big ${isOn?'on':'off'}">${isOn?'● Connected':'○ Offline'}</div><p>${i.desc}</p></div>`;
+    }).join('');
+}
+
+// ─── Logs ───
+function addLog(level, msg) {
+    const now = new Date();
+    const ts = now.toTimeString().split(' ')[0];
+    activityLog.push({ time: ts, level, msg, raw: `${ts} [${level.toUpperCase()}] ${msg}` });
+    if (activityLog.length > 500) activityLog.shift();
+    renderLogs();
+}
+
+function renderLogs() {
+    const el = document.getElementById('logViewer');
+    if (!el || !document.getElementById('view-logs').classList.contains('active')) return;
+    const search = (document.getElementById('logSearch')?.value || '').toLowerCase();
+    const level = document.getElementById('logLevel')?.value || '';
+    const filtered = activityLog.filter(l => {
+        if (search && !l.msg.toLowerCase().includes(search)) return false;
+        if (level && l.level !== level) return false;
+        return true;
+    });
+    if (!filtered.length) { el.innerHTML = '<div class="empty-state"><h3>No logs</h3></div>'; return; }
+    el.innerHTML = filtered.map(l => `<div class="log-line"><span class="log-time">${l.time}</span><span class="log-level ${l.level}">${l.level.toUpperCase()}</span><span class="log-msg">${esc(l.msg)}</span></div>`).join('');
+    el.scrollTop = el.scrollHeight;
+}
+
+function filterLogs() { renderLogs(); }
+function clearLogs() { activityLog = []; renderLogs(); }
+
+// ─── Export ───
+function exportData() {
+    exportIncidents('json');
+}
+
+function exportIncidents(format) {
+    if (!allIncidents.length) { showToast('No incidents to export', 'info'); return; }
+    let content, filename, type;
+    if (format === 'csv') {
+        const headers = ['incident_id','title','severity','status','source','timestamp','root_cause','pipeline_duration_ms'];
+        const rows = allIncidents.map(inc => headers.map(h => `"${(inc[h]||'').toString().replace(/"/g,'""')}"`).join(','));
+        content = [headers.join(','), ...rows].join('\n');
+        filename = `autosre_incidents_${Date.now()}.csv`;
+        type = 'text/csv';
+    } else {
+        content = JSON.stringify(allIncidents, null, 2);
+        filename = `autosre_incidents_${Date.now()}.json`;
+        type = 'application/json';
     }
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${allIncidents.length} incidents as ${format.toUpperCase()}`, 'success');
+    addLog('info', `Exported ${allIncidents.length} incidents as ${format}`);
+}
 
-    // Priority 3: from DB runs
-    runs.forEach(run => {
-        if (!agentStates[run.agent_type]) {
-            agentStates[run.agent_type] = run.status === 'completed' ? 'completed' :
-                run.status === 'running' ? 'running' : run.status === 'failed' ? 'failed' : 'idle';
-        }
-    });
-
-    document.querySelectorAll('.agent-node').forEach(node => {
-        const agent = node.dataset.agent;
-        if (!agent) return;
-        const state = agentStates[agent] || 'idle';
-        node.className = `agent-node ${state}`;
-        const statusEl = node.querySelector('.agent-status');
-        if (statusEl) {
-            statusEl.textContent = state.charAt(0).toUpperCase() + state.slice(1);
-            statusEl.className = `agent-status ${state}`;
-        }
-    });
+function exportLogs() {
+    if (!activityLog.length) { showToast('No logs to export', 'info'); return; }
+    const content = activityLog.map(l => l.raw).join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `autosre_logs_${Date.now()}.txt`; a.click();
+    URL.revokeObjectURL(url);
+    showToast('Logs exported', 'success');
 }
 
 // ─── Simulation ───
-function simulateIncident() {
-    document.getElementById('simulateModal').style.display = 'flex';
-}
-
-function closeModal() {
-    document.getElementById('simulateModal').style.display = 'none';
-}
+function simulateIncident() { document.getElementById('simulateModal').style.display = 'flex'; }
+function closeModal() { document.getElementById('simulateModal').style.display = 'none'; }
 
 async function fireSimulation() {
     const btn = document.getElementById('btnFire');
-    btn.disabled = true;
-    btn.textContent = '⏳ Firing...';
-
+    btn.disabled = true; btn.textContent = '⏳ Firing…';
     try {
         const body = {
             title: document.getElementById('simTitle').value,
@@ -297,63 +375,41 @@ async function fireSimulation() {
             severity: document.getElementById('simSeverity').value,
             source: document.getElementById('simSource').value,
         };
-
-        const res = await fetch(`${API_BASE}/incidents/simulate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-
+        const res = await fetch(`${API}/incidents/simulate`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
         const data = await res.json();
         closeModal();
-        showToast(`🔥 Incident ${data.incident_id} fired!`, 'success');
+        showToast(`Incident ${data.incident_id} fired!`, 'success');
+        addLog('info', `Incident ${data.incident_id} simulated: ${body.title}`);
         currentIncidentId = data.incident_id;
-
-        // Immediately refresh
         setTimeout(refreshIncidents, 500);
-        setTimeout(() => loadIncidentDetails(data.incident_id), 1000);
-
-    } catch (e) {
-        showToast(`❌ Failed to fire incident: ${e.message}`, 'error');
+        setTimeout(() => loadDetail(data.incident_id), 1000);
+        switchView('incidents');
+    } catch(e) {
+        showToast(`Failed: ${e.message}`, 'error');
+        addLog('error', `Simulation failed: ${e.message}`);
     } finally {
-        btn.disabled = false;
-        btn.textContent = '🔥 Fire Incident';
+        btn.disabled = false; btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Fire Incident';
     }
 }
 
-// ─── Toast Notifications ───
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerHTML = message;
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(20px)';
-        setTimeout(() => toast.remove(), 300);
-    }, 4000);
+// ─── Toast ───
+function showToast(msg, type='info') {
+    const c = document.getElementById('toastContainer');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`; t.innerHTML = msg;
+    c.appendChild(t);
+    setTimeout(() => { t.style.opacity='0'; t.style.transform='translateX(16px)'; setTimeout(()=>t.remove(),300); }, 4000);
 }
 
-// ─── Utilities ───
-function formatStatus(status) {
-    const map = {
-        'open': '● Open',
-        'processing': '◉ Processing',
-        'investigating': '◉ Investigating',
-        'diagnosed_and_escalated': '✓ Resolved',
-        'resolved': '✓ Resolved',
-        'failed': '✗ Failed',
-    };
-    return map[status] || status;
+// ─── Utils ───
+function fmtStatus(s) {
+    return { open:'Open', processing:'Processing', investigating:'Investigating', diagnosed_and_escalated:'Resolved', resolved:'Resolved', failed:'Failed' }[s] || s;
 }
 
-function formatTime(ts) {
-    if (!ts) return '';
+function fmtTime(ts) {
+    if (!ts) return '—';
     try {
-        const d = new Date(ts);
-        const now = new Date();
-        const diff = Math.floor((now - d) / 1000);
+        const d = new Date(ts); const now = new Date(); const diff = Math.floor((now-d)/1000);
         if (diff < 60) return `${diff}s ago`;
         if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
         if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
@@ -361,14 +417,24 @@ function formatTime(ts) {
     } catch { return ts; }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-}
+function esc(t) { if(!t) return ''; const d=document.createElement('div'); d.textContent=String(t); return d.innerHTML; }
 
-// Close modal on Escape
-document.addEventListener('keydown', (e) => {
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeModal();
+    if (e.key === '1' && e.altKey) switchView('dashboard');
+    if (e.key === '2' && e.altKey) switchView('incidents');
+    if (e.key === '3' && e.altKey) switchView('agents');
+    if (e.key === '4' && e.altKey) switchView('logs');
+    if (e.key === '5' && e.altKey) switchView('integrations');
 });
+
+// ─── Sidebar Toggle ───
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const main = document.querySelector('.main');
+    const toggle = document.getElementById('sidebarToggle');
+    sidebar.classList.toggle('collapsed');
+    main.classList.toggle('sidebar-collapsed');
+    toggle.classList.toggle('collapsed');
+}

@@ -13,9 +13,10 @@ redis
 # Database
 psycopg[binary]
 
-# AI / LLM (Ollama via OpenAI-compatible API)
+# AI / LLM
 httpx
 openai
+google-genai>=2.0.0
 
 # External Integrations
 slack_sdk
@@ -24,6 +25,7 @@ jira
 
 # Observability
 langfuse
+omium
 
 # Utilities
 python-multipart

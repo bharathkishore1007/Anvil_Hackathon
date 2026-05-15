@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.env
+*.md
+test_suite.py
+omium_workflow.py
+docker-compose.yml
+.venv
+venv
+node_modules
+*.webp
+.gemini

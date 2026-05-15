@@ -38,19 +38,68 @@ class PostgresClient:
 
         try:
             import psycopg
-            conninfo = (
-                f"host={settings.POSTGRES_HOST} port={settings.POSTGRES_PORT} "
-                f"dbname={settings.POSTGRES_DB} user={settings.POSTGRES_USER} "
-                f"password={settings.POSTGRES_PASSWORD} connect_timeout=1"
-            )
+            conninfo = settings.POSTGRES_DSN
             self._conn = psycopg.connect(conninfo, autocommit=True)
-            logger.info("Connected to PostgreSQL (psycopg3)")
+            logger.info("Connected to PostgreSQL")
+            self._ensure_schema()
             return self._conn
         except Exception as e:
             logger.warning(f"PostgreSQL unavailable: {e}")
             self._conn = None
             self._last_fail = time.time()
             return None
+
+    def _ensure_schema(self):
+        """Create tables if they don't exist (safe for Neon/fresh DBs)."""
+        if not self._conn:
+            return
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS incidents (
+                        incident_id TEXT PRIMARY KEY,
+                        source TEXT DEFAULT 'manual',
+                        severity TEXT DEFAULT 'medium',
+                        title TEXT NOT NULL,
+                        description TEXT DEFAULT '',
+                        metadata JSONB DEFAULT '{}',
+                        status TEXT DEFAULT 'open',
+                        execution_plan JSONB,
+                        root_cause TEXT,
+                        agent_results JSONB,
+                        pipeline_duration_ms INTEGER,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        completed_at TIMESTAMPTZ
+                    );
+                    CREATE TABLE IF NOT EXISTS agent_runs (
+                        run_id TEXT PRIMARY KEY,
+                        incident_id TEXT,
+                        agent_type TEXT,
+                        task_input JSONB,
+                        task_output JSONB,
+                        status TEXT DEFAULT 'running',
+                        started_at TIMESTAMPTZ DEFAULT NOW(),
+                        completed_at TIMESTAMPTZ,
+                        duration_ms INTEGER DEFAULT 0,
+                        token_count INTEGER DEFAULT 0,
+                        error TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                    CREATE TABLE IF NOT EXISTS tool_calls (
+                        call_id TEXT PRIMARY KEY,
+                        run_id TEXT,
+                        tool_name TEXT,
+                        tool_input JSONB,
+                        tool_output JSONB,
+                        status TEXT DEFAULT 'completed',
+                        duration_ms INTEGER DEFAULT 0,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+            logger.info("PostgreSQL schema verified")
+        except Exception as e:
+            logger.warning(f"Schema check failed: {e}")
 
     def create_incident(self, incident: Dict[str, Any]) -> bool:
         conn = self._get_conn()

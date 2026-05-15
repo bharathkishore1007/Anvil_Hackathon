@@ -36,6 +36,12 @@ class BaseAgent:
         self.model = settings.OLLAMA_MODEL
         self.fallback_model = settings.OLLAMA_FALLBACK_MODEL
         self.base_url = settings.OLLAMA_BASE_URL
+        self._use_gemini = settings.has_gemini()
+        if self._use_gemini:
+            from llm.gemini_provider import get_gemini
+            self._gemini = get_gemini(settings.GEMINI_API_KEY, settings.GEMINI_MODEL)
+            self.model = settings.GEMINI_MODEL
+            logger.info(f"[{name}] Using Gemini API: {self.model}")
 
     def _build_tool_descriptions(self) -> str:
         """Build a text description of available tools for the system prompt."""
@@ -48,7 +54,13 @@ class BaseAgent:
         return "\n".join(lines)
 
     def _call_ollama(self, messages: List[Dict], model: str = None) -> Dict[str, Any]:
-        """Call Ollama's OpenAI-compatible chat API."""
+        """Call LLM — uses Gemini if configured, otherwise Ollama."""
+
+        # Use Gemini if available
+        if self._use_gemini:
+            return self._gemini.chat(messages)
+
+        # Otherwise use Ollama
         model = model or self.model
         url = f"{self.base_url}/api/chat"
 

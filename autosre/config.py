@@ -32,6 +32,10 @@ class Settings:
 
     @property
     def POSTGRES_DSN(self) -> str:
+        # If DATABASE_URL is set (Neon/Supabase), use it directly
+        db_url = os.getenv("DATABASE_URL", "")
+        if db_url:
+            return db_url
         return (
             f"host={self.POSTGRES_HOST} port={self.POSTGRES_PORT} "
             f"dbname={self.POSTGRES_DB} user={self.POSTGRES_USER} "
@@ -85,6 +89,13 @@ class Settings:
 
     def has_email(self) -> bool:
         return bool(self.SMTP_EMAIL and self.SMTP_PASSWORD)
+
+    # --- Gemini (Cloud LLM) ---
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    def has_gemini(self) -> bool:
+        return bool(self.GEMINI_API_KEY)
 
     # --- Omium ---
     OMIUM_API_KEY: str = os.getenv("OMIUM_API_KEY", "")

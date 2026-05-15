@@ -27,7 +27,7 @@ def init_omium():
 
         import omium
         os.environ["OMIUM_API_KEY"] = settings.OMIUM_API_KEY
-        omium.init(api_key=settings.OMIUM_API_KEY)
+        omium.init(api_key=settings.OMIUM_API_KEY, project="autosre")
         _omium_initialized = True
         logger.info("✅ Omium initialized")
         return True

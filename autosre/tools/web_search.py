@@ -13,16 +13,16 @@ import httpx
 logger = logging.getLogger("autosre.tools.web_search")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (AutoSRE/1.0; Incident Research Bot)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 }
 
 
 async def web_search(query: str, max_results: int = 5) -> Dict[str, Any]:
     """Search the web for information related to an incident.
-    
+
     Returns structured results with titles, snippets, and URLs.
     """
-    logger.info(f"[web_search] Searching: {query}")
+    logger.info(f"[web_search] Searching DuckDuckGo: {query}")
     results = []
 
     try:
@@ -34,6 +34,8 @@ async def web_search(query: str, max_results: int = 5) -> Dict[str, Any]:
                 headers=HEADERS,
                 follow_redirects=True,
             )
+            logger.info(f"[web_search] DuckDuckGo response: HTTP {resp.status_code}, {len(resp.text)} bytes")
+
             if resp.status_code == 200:
                 text = resp.text
                 # Parse basic results from HTML
@@ -51,23 +53,71 @@ async def web_search(query: str, max_results: int = 5) -> Dict[str, Any]:
                 )
 
                 for i in range(min(max_results, len(titles))):
+                    clean_title = re.sub(r'<[^>]+>', '', titles[i]).strip() if i < len(titles) else ""
+                    clean_snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip() if i < len(snippets) else ""
+                    clean_url = re.sub(r'<[^>]+>', '', urls[i]).strip() if i < len(urls) else ""
                     results.append({
-                        "title": re.sub(r'<[^>]+>', '', titles[i]).strip() if i < len(titles) else "",
-                        "snippet": re.sub(r'<[^>]+>', '', snippets[i]).strip() if i < len(snippets) else "",
-                        "url": urls[i].strip() if i < len(urls) else "",
+                        "title": clean_title,
+                        "snippet": clean_snippet,
+                        "url": clean_url,
                     })
+                    logger.info(f"[web_search] Result {i+1}: {clean_title[:80]}")
     except Exception as e:
-        logger.warning(f"Web search failed: {e}")
+        logger.warning(f"[web_search] DuckDuckGo search failed: {e}")
 
     # If no results from web, provide structured knowledge base results
     if not results:
+        logger.info("[web_search] No web results, using internal knowledge base fallback")
         results = _knowledge_base_search(query)
 
+    logger.info(f"[web_search] Total results: {len(results)} for query: {query[:60]}")
     return {
         "query": query,
         "results_count": len(results),
+        "source": "duckduckgo" if results and results[0].get("url", "").startswith("http") else "knowledge_base",
         "results": results,
     }
+
+
+async def search_cve_and_errors(incident_title: str) -> Dict[str, Any]:
+    """Targeted search for CVEs, Stack Overflow issues, and known bug reports.
+
+    This performs multiple focused web searches to find actionable remediation context.
+    """
+    logger.info(f"[cve_search] Running targeted CVE/error searches for: {incident_title}")
+
+    # Extract key error terms
+    error_terms = _extract_error_terms(incident_title)
+
+    searches = [
+        f"site:stackoverflow.com {error_terms} production fix",
+        f"CVE {error_terms} vulnerability remediation",
+        f"{error_terms} incident postmortem root cause",
+    ]
+
+    all_results = []
+    for search_query in searches:
+        result = await web_search(search_query, max_results=3)
+        for r in result.get("results", []):
+            r["search_category"] = search_query.split(" ")[0]  # site:, CVE, or error term
+        all_results.extend(result.get("results", []))
+        logger.info(f"[cve_search] '{search_query[:50]}' → {result['results_count']} results")
+
+    return {
+        "query": incident_title,
+        "searches_performed": len(searches),
+        "total_results": len(all_results),
+        "results": all_results[:8],
+    }
+
+
+def _extract_error_terms(title: str) -> str:
+    """Extract meaningful error terms from incident title for targeted searching."""
+    # Remove common SRE noise words
+    noise = {"the", "a", "an", "on", "in", "to", "for", "is", "was", "are", "been",
+             "has", "had", "have", "test", "inc", "alert", "fired", "triggered"}
+    words = [w for w in re.split(r'[\s\-_/]+', title.lower()) if w not in noise and len(w) > 2]
+    return " ".join(words[:6])
 
 
 async def fetch_url(url: str) -> Dict[str, Any]:
@@ -85,7 +135,7 @@ async def fetch_url(url: str) -> Dict[str, Any]:
             return {
                 "url": url,
                 "status_code": resp.status_code,
-                "content": clean[:5000],  # Limit content length
+                "content": clean[:5000],
                 "content_length": len(clean),
             }
     except Exception as e:

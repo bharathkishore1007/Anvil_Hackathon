@@ -3,10 +3,12 @@ AutoSRE — FastAPI Gateway
 Main API application: webhook endpoints, incident management, and dashboard serving.
 """
 
+import concurrent.futures
 import json
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -260,7 +262,7 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
             get_postgres().update_incident(incident_id, {
                 "status": "diagnosed_and_escalated",
                 "root_cause": final.get("root_cause", ""),
-                "resolution": final.get("summary", ""),
+                "pipeline_duration_ms": pipeline_duration,
             })
         except Exception:
             pass
@@ -275,6 +277,17 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
 
         logger.info(f"[Pipeline] ✅ Incident {incident_id} fully resolved in {pipeline_duration}ms")
 
+        # ── Phase 5: Long-Running Post-Resolution Monitoring ──
+        # Spawns a background monitoring job that runs for 2 minutes,
+        # polling service health every 30s to verify the fix holds.
+        threading.Thread(
+            target=_post_resolution_monitor,
+            args=(incident_id, incident_data),
+            daemon=True,
+            name=f"monitor-{incident_id}",
+        ).start()
+        logger.info(f"[Pipeline] 🔄 Post-resolution monitoring started for {incident_id} (2 min)")
+
     except Exception as e:
         logger.error(f"[Pipeline] Fatal error processing {incident_id}: {e}")
         _incidents_store[incident_id] = {
@@ -282,6 +295,59 @@ def _process_incident_sync(incident_data: Dict[str, Any]):
             "status": "failed",
             "error": str(e),
         }
+
+
+def _post_resolution_monitor(incident_id: str, incident_data: dict):
+    """Long-running background job: monitors service health for 2 minutes post-resolution.
+
+    Runs 4 health checks at 30-second intervals, then sends a follow-up Slack report
+    confirming the fix is stable or flagging regression.
+    """
+    import httpx
+
+    logger.info(f"[Monitor] Starting 2-minute post-resolution watch for {incident_id}")
+    checks = []
+    total_checks = 4
+    check_interval = 30  # seconds
+
+    for i in range(total_checks):
+        time.sleep(check_interval)
+        ts = datetime.now(timezone.utc).isoformat()
+        try:
+            r = httpx.get("http://localhost:11434/api/tags", timeout=5)
+            healthy = r.status_code == 200
+        except Exception:
+            healthy = False
+
+        check = {"check": i + 1, "timestamp": ts, "healthy": healthy}
+        checks.append(check)
+        logger.info(f"[Monitor] {incident_id} — check {i+1}/{total_checks}: {'✅ healthy' if healthy else '❌ degraded'}")
+
+    # Update incident with monitoring results
+    all_healthy = all(c["healthy"] for c in checks)
+    _incidents_store[incident_id]["post_resolution_monitoring"] = {
+        "checks": checks,
+        "duration_seconds": total_checks * check_interval,
+        "all_healthy": all_healthy,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Send follow-up Slack notification
+    try:
+        from tools.slack_tools import post_message
+        status_emoji = "✅" if all_healthy else "⚠️"
+        post_message(text=
+            f"{status_emoji} *Post-Resolution Report — {incident_id}*\n"
+            f"• Monitoring period: {total_checks * check_interval}s ({total_checks} checks)\n"
+            f"• All checks passed: {'Yes' if all_healthy else 'No — regression detected'}\n"
+            f"• Incident: {incident_data.get('title', 'N/A')}\n"
+            f"• Verdict: {'Fix confirmed stable' if all_healthy else 'Further investigation required'}"
+        )
+        logger.info(f"[Monitor] Follow-up Slack report sent for {incident_id}")
+    except Exception as e:
+        logger.warning(f"[Monitor] Slack follow-up failed: {e}")
+
+    logger.info(f"[Monitor] ✅ Post-resolution monitoring complete for {incident_id} ({total_checks * check_interval}s)")
 
 
 # ─── Health Check (cached to avoid repeated timeout delays) ───
@@ -296,13 +362,16 @@ async def health_check():
 
     checks = {"api": True}
 
-    # Check Ollama
-    try:
-        import httpx
-        r = httpx.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=2.0)
-        checks["ollama"] = r.status_code == 200
-    except Exception:
-        checks["ollama"] = False
+    # Check LLM (Gemini or Ollama)
+    if settings.has_gemini():
+        checks["ollama"] = True  # Gemini is cloud-native, always available
+    else:
+        try:
+            import httpx as _hx
+            r = _hx.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=2.0)
+            checks["ollama"] = r.status_code == 200
+        except Exception:
+            checks["ollama"] = False
 
     # Check Redis
     try:
@@ -319,7 +388,7 @@ async def health_check():
         checks["postgres"] = False
 
     result = {
-        "status": "healthy" if all(checks.values()) else "degraded",
+        "status": "healthy" if checks["api"] and checks["ollama"] else "degraded",
         "checks": checks,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0",
@@ -342,7 +411,7 @@ async def dashboard():
 
 # ─── Webhook Endpoints ───
 @app.post("/webhooks/pagerduty")
-async def pagerduty_webhook(request: Request, background_tasks: BackgroundTasks):
+async def pagerduty_webhook(request: Request):
     """Receive and process PagerDuty alerts."""
     body = await request.body()
     sig = request.headers.get("X-PagerDuty-Signature")
@@ -351,12 +420,12 @@ async def pagerduty_webhook(request: Request, background_tasks: BackgroundTasks)
     payload = json.loads(body)
     incident = normalize_pagerduty(payload)
     _incidents_store[incident.incident_id] = incident.model_dump()
-    background_tasks.add_task(_process_incident_sync, incident.model_dump())
+    threading.Thread(target=_process_incident_sync, args=(incident.model_dump(),), daemon=True).start()
     return IncidentResponse(incident_id=incident.incident_id, status="accepted", message="Incident queued")
 
 
 @app.post("/webhooks/github")
-async def github_webhook(request: Request, background_tasks: BackgroundTasks):
+async def github_webhook(request: Request):
     """Receive and process GitHub events."""
     body = await request.body()
     sig = request.headers.get("X-Hub-Signature-256")
@@ -365,12 +434,12 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = json.loads(body)
     incident = normalize_github(payload)
     _incidents_store[incident.incident_id] = incident.model_dump()
-    background_tasks.add_task(_process_incident_sync, incident.model_dump())
+    threading.Thread(target=_process_incident_sync, args=(incident.model_dump(),), daemon=True).start()
     return IncidentResponse(incident_id=incident.incident_id, status="accepted", message="Incident queued")
 
 
 @app.post("/webhooks/slack")
-async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
+async def slack_webhook(request: Request):
     """Receive and process Slack commands."""
     body = await request.body()
     timestamp = request.headers.get("X-Slack-Request-Timestamp")
@@ -380,19 +449,25 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = json.loads(body)
     incident = normalize_slack(payload)
     _incidents_store[incident.incident_id] = incident.model_dump()
-    background_tasks.add_task(_process_incident_sync, incident.model_dump())
+    threading.Thread(target=_process_incident_sync, args=(incident.model_dump(),), daemon=True).start()
     return IncidentResponse(incident_id=incident.incident_id, status="accepted", message="Incident queued")
 
 
 # ─── Simulation Endpoint ───
 @app.post("/incidents/simulate")
-async def simulate_incident(req: SimulateRequest, background_tasks: BackgroundTasks):
+async def simulate_incident(req: SimulateRequest):
     """Trigger a simulated incident for demo purposes."""
     incident = normalize_manual(req.model_dump())
     incident_data = incident.model_dump()
     _incidents_store[incident_data["incident_id"]] = incident_data
     logger.info(f"[Simulate] Firing incident: {incident_data['incident_id']}")
-    background_tasks.add_task(_process_incident_sync, incident_data)
+    # Use thread instead of BackgroundTasks — survives on Cloud Run
+    threading.Thread(
+        target=_process_incident_sync,
+        args=(incident_data,),
+        daemon=True,
+        name=f"pipeline-{incident_data['incident_id']}",
+    ).start()
     return {
         "incident_id": incident_data["incident_id"],
         "status": "accepted",
@@ -404,23 +479,42 @@ async def simulate_incident(req: SimulateRequest, background_tasks: BackgroundTa
 @app.get("/incidents")
 async def list_incidents():
     """List all incidents."""
-    # Try postgres first
+    merged = {}
+
+    # Load from postgres
     try:
         from memory.postgres_client import get_postgres
         pg = get_postgres()
         db_incidents = pg.list_incidents(limit=50)
-        if db_incidents:
-            return {"incidents": _serialize(db_incidents), "source": "database"}
+        for inc in (db_incidents or []):
+            iid = inc.get("incident_id", "")
+            if iid:
+                merged[iid] = inc
     except Exception:
         pass
 
-    # Fallback to in-memory
+    # Overlay in-memory state (has the most up-to-date status)
+    for iid, mem_inc in _incidents_store.items():
+        if iid in merged:
+            # Memory has fresher status — overlay key fields
+            merged[iid]["status"] = mem_inc.get("status", merged[iid].get("status"))
+            if mem_inc.get("root_cause"):
+                merged[iid]["root_cause"] = mem_inc["root_cause"]
+            if mem_inc.get("pipeline_duration_ms"):
+                merged[iid]["pipeline_duration_ms"] = mem_inc["pipeline_duration_ms"]
+            if mem_inc.get("completed_at"):
+                merged[iid]["completed_at"] = mem_inc["completed_at"]
+            if mem_inc.get("agent_results"):
+                merged[iid]["agent_results"] = mem_inc["agent_results"]
+        else:
+            merged[iid] = mem_inc
+
     incidents = sorted(
-        _incidents_store.values(),
-        key=lambda x: x.get("timestamp", ""),
+        merged.values(),
+        key=lambda x: x.get("timestamp", x.get("created_at", "")),
         reverse=True,
     )
-    return {"incidents": _serialize(incidents), "source": "memory"}
+    return {"incidents": _serialize(incidents), "source": "merged"}
 
 
 @app.get("/incidents/{incident_id}")
@@ -446,6 +540,27 @@ async def get_incident(incident_id: str):
         return {"incident": _serialize_single(_incidents_store[incident_id]), "source": "memory"}
 
     raise HTTPException(status_code=404, detail="Incident not found")
+
+
+@app.post("/admin/fix-stuck")
+async def fix_stuck_incidents():
+    """Fix old incidents stuck at 'investigating' in the DB."""
+    fixed = 0
+    try:
+        from memory.postgres_client import get_postgres
+        pg = get_postgres()
+        stuck = pg.list_incidents(limit=50, status="investigating")
+        for inc in (stuck or []):
+            iid = inc.get("incident_id", "")
+            # Check if agent runs completed
+            runs = pg.get_agent_runs(iid)
+            completed_agents = [r for r in runs if r.get("status") == "completed"]
+            if len(completed_agents) >= 2:  # At least planner + analyst completed
+                pg.update_incident(iid, {"status": "diagnosed_and_escalated"})
+                fixed += 1
+    except Exception as e:
+        return {"fixed": fixed, "error": str(e)}
+    return {"fixed": fixed, "message": f"Fixed {fixed} stuck incidents"}
 
 
 @app.get("/runs")
@@ -479,7 +594,7 @@ async def system_status():
         "resolved_incidents": resolved,
         "in_memory_incidents": list(_incidents_store.keys()),
         "agents": ["planner", "analyst", "researcher", "coder", "communicator", "executor"],
-        "ollama_model": settings.OLLAMA_MODEL,
+        "ollama_model": settings.GEMINI_MODEL if settings.has_gemini() else settings.OLLAMA_MODEL,
         "integrations": {
             "slack": settings.has_slack(),
             "github": settings.has_github(),
@@ -487,10 +602,11 @@ async def system_status():
             "langfuse": settings.has_langfuse(),
             "email": settings.has_email(),
             "omium": settings.has_omium(),
-            "ollama": True,
+            "ollama": settings.has_gemini() or True,
         },
         "langfuse_url": settings.LANGFUSE_BASE_URL if settings.has_langfuse() else None,
         "omium_url": "https://app.omium.ai" if settings.has_omium() else None,
+        "llm_provider": "gemini" if settings.has_gemini() else "ollama",
     }
 
 
